@@ -1,0 +1,20 @@
+ALTER TABLE public.detailers DROP CONSTRAINT IF EXISTS detailers_id_fkey;
+ALTER TABLE public.detailers ALTER COLUMN id SET DEFAULT gen_random_uuid();
+
+alter table public.detailers add column if not exists vehicle_make text;
+alter table public.detailers add column if not exists vehicle_model text;
+alter table public.detailers add column if not exists vehicle_year integer;
+alter table public.detailers add column if not exists vehicle_color text;
+alter table public.detailers add column if not exists status text default 'active';
+alter table public.detailers add column if not exists service_areas jsonb;
+alter table public.detailers add column if not exists is_online boolean default false;
+alter table public.detailers add column if not exists is_approved boolean default true;
+alter table public.detailers add column if not exists stripe_connect_account_id text;
+alter table public.detailers add column if not exists stripe_connect_completed boolean default false;
+alter table public.detailers add column if not exists rating numeric default 5.0;
+alter table public.detailers add column if not exists total_completed_jobs integer default 0;
+alter table public.detailers add column if not exists total_earnings numeric default 0;
+alter table public.detailers add column if not exists updated_at timestamptz default now();
+alter table public.detailers add column if not exists application_id uuid references public.detailer_applications(id) on delete set null;
+alter table public.detailers add column if not exists profile_photo_url text;
+alter table public.detailers add column if not exists auth_user_id uuid references auth.users(id) on delete set null;

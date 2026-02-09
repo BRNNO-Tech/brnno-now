@@ -1,0 +1,7 @@
+{
+  "name": "BRNNO NOW",
+  "description": "A premium on-demand mobile detailing platform inspired by Uber, featuring real-time tracking, service scheduling, and AI-powered detailing recommendations.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

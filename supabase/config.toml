@@ -1,0 +1,16 @@
+# Edge Function config: allow OPTIONS preflight to reach the function (no JWT on preflight).
+# Our functions still validate the JWT for POST requests inside the handler.
+[functions.create-setup-intent]
+verify_jwt = false
+
+[functions.create-payment-intent]
+verify_jwt = false
+
+[functions.save-payment-method]
+verify_jwt = false
+
+[functions.capture-payment]
+verify_jwt = false
+
+[functions.cancel-payment]
+verify_jwt = false
