@@ -18,6 +18,58 @@ const LARGE_PATTERNS = ['f-150', 'f150', 'silverado', 'sierra 1500', 'sierra 250
 const MEDIUM_PATTERNS = ['cr-v', 'crv', 'rav4', 'rav 4', 'escape', 'equinox', 'rogue', 'tucson', 'sportage', 'cx-5', 'cx5', 'forester', 'outback', 'crosstrek', 'edge', 'murano', 'pathfinder', 'acadia', 'enclave', 'compass', 'renegade', 'cherokee', 'bronco sport', 'model y', 'model x', 'id.4', 'ev6', 'ioniq 5', 'mach-e', 'mustang mach-e'];
 const SEDAN_PATTERNS = ['civic', 'accord', 'camry', 'corolla', 'altima', 'maxima', 'sentra', 'fusion', 'malibu', 'impala', 'cruze', 'spark', 'elantra', 'sonata', 'optima', 'k5', 'forte', 'rio', 'passat', 'jetta', 'golf', 'gli', 'gti', 'mazda3', 'mazda 3', 'mazda6', 'mazda 6', 'legacy', 'wrx', 'impreza', 'model 3', 'model s', 'a3', 'a4', 'a6', '3 series', '5 series', 'c-class', 'e-class', 'tlx', 'ilx', 'rlx', 'cts', 'ct5', 'ct6'];
 
+/** Resolve coupon by promotion code or coupon ID; return discounted amount in cents. Throws if invalid. */
+async function applyCouponDiscount(
+  stripe: Stripe,
+  amountCents: number,
+  couponCode: string
+): Promise<number> {
+  const code = String(couponCode).trim().toUpperCase();
+  if (!code) return amountCents;
+
+  let coupon: Stripe.Coupon | null = null;
+
+  // Try promotion code lookup first (customer-facing code like "SAVE20")
+  const promoCodes = await stripe.promotionCodes.list({ code, active: true, limit: 1 });
+  if (promoCodes.data.length > 0) {
+    const promo = promoCodes.data[0];
+    const couponId =
+      (promo as { promotion?: { coupon?: string } }).promotion?.coupon ??
+      (typeof promo.coupon === 'string' ? promo.coupon : (promo.coupon as Stripe.Coupon)?.id);
+    if (couponId) {
+      coupon = await stripe.coupons.retrieve(couponId);
+    } else if (promo.coupon && typeof promo.coupon === 'object') {
+      coupon = promo.coupon as Stripe.Coupon;
+    }
+  }
+
+  // Fallback: try as coupon ID (e.g. "SUMMER20")
+  if (!coupon) {
+    try {
+      coupon = await stripe.coupons.retrieve(code);
+    } catch {
+      // Try with original case
+      try {
+        coupon = await stripe.coupons.retrieve(couponCode.trim());
+      } catch {
+        throw new Error('Invalid or expired discount code');
+      }
+    }
+  }
+
+  if (!coupon.valid) {
+    throw new Error('Invalid or expired discount code');
+  }
+
+  if (coupon.percent_off != null) {
+    return Math.max(50, Math.round(amountCents * (1 - coupon.percent_off / 100)));
+  }
+  if (coupon.amount_off != null) {
+    return Math.max(50, amountCents - coupon.amount_off);
+  }
+  return amountCents;
+}
+
 function inferVehicleSize(make: string, model: string): VehicleSize {
   const m = (make || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const mod = (model || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -58,6 +110,7 @@ Deno.serve(async (req) => {
     const metadata = (body?.metadata as Record<string, string>) ?? {};
     const serviceId = body?.service_id as string | undefined;
     const vehicle = body?.vehicle as { make?: string; model?: string; year?: string } | undefined;
+    const couponCode = (body?.coupon_code as string | undefined)?.trim?.();
     const customerDetails = body?.customer_details as {
       address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
       address_source?: 'billing' | 'shipping';
@@ -81,6 +134,19 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // Apply coupon discount if provided
+    if (couponCode) {
+      try {
+        amountCents = await applyCouponDiscount(stripe, amountCents, couponCode);
+      } catch (couponErr) {
+        const msg = couponErr instanceof Error ? couponErr.message : 'Invalid or expired discount code';
+        return new Response(JSON.stringify({ error: msg }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     // Tax preview only: return subtotal/tax/total for display before payment. No PaymentIntent created.

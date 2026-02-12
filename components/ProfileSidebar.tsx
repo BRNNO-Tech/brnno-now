@@ -5,6 +5,7 @@ import { UserProfile, PastBooking, VehicleInfo, vehicleDisplayString } from '../
 import { useAuth } from '../contexts/AuthContext';
 import { listBookingsByUser } from '../services/bookings';
 import { loadSavedVehicle, saveSavedVehicle, clearSavedVehicle } from '../utils/savedVehicle';
+import { fetchVehicleModels } from '../services/vehicleModels';
 import { VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS } from '../constants';
 import { TERMS_SECTIONS, PRIVACY_SECTIONS } from '../content/legal';
 import {
@@ -162,6 +163,8 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
   const [vehicleForm, setVehicleForm] = useState({ year: String(new Date().getFullYear()), make: '', model: '', color: '' });
   const [vehicleShowForm, setVehicleShowForm] = useState(true);
   const [vehicleSaveMessage, setVehicleSaveMessage] = useState<string | null>(null);
+  const [vehicleModels, setVehicleModels] = useState<string[]>([]);
+  const [vehicleModelsLoading, setVehicleModelsLoading] = useState(false);
 
   // Auth form state (when not logged in)
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -225,6 +228,29 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
     }
     setVehicleSaveMessage(null);
   }, [currentView]);
+
+  // Fetch vehicle models when year + make are selected (My vehicle form)
+  useEffect(() => {
+    if (!vehicleForm.year?.trim() || !vehicleForm.make?.trim()) {
+      setVehicleModels([]);
+      return;
+    }
+    let cancelled = false;
+    setVehicleModelsLoading(true);
+    fetchVehicleModels(vehicleForm.make, vehicleForm.year)
+      .then((models) => {
+        if (!cancelled) setVehicleModels(models);
+      })
+      .catch(() => {
+        if (!cancelled) setVehicleModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setVehicleModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicleForm.year, vehicleForm.make]);
 
   const handleRemoveCard = async (id: string) => {
     try {
@@ -897,7 +923,7 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Year</label>
                         <select
                           value={vehicleForm.year}
-                          onChange={(e) => setVehicleForm((f) => ({ ...f, year: e.target.value }))}
+                          onChange={(e) => setVehicleForm((f) => ({ ...f, year: e.target.value, model: '' }))}
                           className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                         >
                           <option value="">Year</option>
@@ -910,7 +936,7 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Make</label>
                         <select
                           value={vehicleForm.make}
-                          onChange={(e) => setVehicleForm((f) => ({ ...f, make: e.target.value }))}
+                          onChange={(e) => setVehicleForm((f) => ({ ...f, make: e.target.value, model: '' }))}
                           className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                         >
                           <option value="">Make</option>
@@ -925,11 +951,23 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Model</label>
                         <input
                           type="text"
+                          list="profile-vehicle-models"
                           value={vehicleForm.model}
                           onChange={(e) => setVehicleForm((f) => ({ ...f, model: e.target.value }))}
-                          placeholder="e.g. Civic, Camry"
+                          placeholder={
+                            vehicleModelsLoading
+                              ? 'Loading...'
+                              : vehicleModels.length > 0
+                                ? 'Select or type'
+                                : 'e.g. Civic, Camry'
+                          }
                           className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                         />
+                        <datalist id="profile-vehicle-models">
+                          {vehicleModels.map((m) => (
+                            <option key={m} value={m} />
+                          ))}
+                        </datalist>
                       </div>
                       <div className="flex-1">
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Color (optional)</label>

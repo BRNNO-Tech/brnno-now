@@ -5,6 +5,7 @@ import CustomerApp from './components/CustomerApp';
 import DetailerSignIn from './components/detailer/DetailerSignIn';
 import DetailerDashboard from './components/detailer/DetailerDashboard';
 import { DetailerSignUp } from './components/DetailerSignUp';
+import AdminRoute from './components/AdminRoute';
 
 const App: React.FC = () => {
   return (
@@ -12,6 +13,7 @@ const App: React.FC = () => {
       <Route path="/detailer/signin" element={<DetailerSignIn />} />
       <Route path="/detailer/dashboard" element={<DetailerDashboard />} />
       <Route path="/detailer-signup" element={<DetailerSignUp />} />
+      <Route path="/admin" element={<AdminRoute />} />
       <Route
         path="*"
         element={

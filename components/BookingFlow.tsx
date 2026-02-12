@@ -6,6 +6,7 @@ import { inferVehicleSize, isSizeSmallerThan } from '../utils/vehicleSize';
 import { loadSavedVehicle, saveSavedVehicle } from '../utils/savedVehicle';
 import { getDetailingRecommendation } from '../services/gemini';
 import { createPaymentIntent, createPaymentIntentForGuest, getTaxPreview } from '../services/paymentMethods';
+import { fetchVehicleModels } from '../services/vehicleModels';
 import type { PaymentMethodDisplay } from '../services/paymentMethods';
 import { stripePromise } from '../lib/stripe';
 
@@ -58,6 +59,7 @@ function GuestCardPaymentForm({
   setProcessing,
   payButtonLabel,
   billingValid = true,
+  couponCode,
 }: {
   amountCents: number;
   customerDetails?: { address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string }; address_source?: 'billing' | 'shipping' };
@@ -72,6 +74,7 @@ function GuestCardPaymentForm({
   setProcessing: (v: boolean) => void;
   payButtonLabel: string;
   billingValid?: boolean;
+  couponCode?: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -92,6 +95,7 @@ function GuestCardPaymentForm({
         service_id: serviceId,
         vehicle,
         customer_details: customerDetails,
+        coupon_code: couponCode?.trim() || undefined,
       });
       const clientSecret = result.client_secret;
       if (!clientSecret) throw new Error('No client_secret');
@@ -109,7 +113,8 @@ function GuestCardPaymentForm({
       if (id) onSuccess(id, totalCents, subtotalCents, taxCents);
       else onError('Payment completed but no intent id');
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Payment failed');
+      const msg = err instanceof Error ? err.message : 'Payment failed';
+      onError(msg);
     } finally {
       setProcessing(false);
     }
@@ -173,8 +178,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
   const [savedVehicle, setSavedVehicle] = useState<VehicleInfo | null>(null);
   const [usingSavedVehicle, setUsingSavedVehicle] = useState(false);
   const [vehicleError, setVehicleError] = useState<string | null>(null);
+  const [vehicleModels, setVehicleModels] = useState<string[]>([]);
+  const [vehicleModelsLoading, setVehicleModelsLoading] = useState(false);
   const [billingZip, setBillingZip] = useState('');
   const [billingState, setBillingState] = useState('');
+  const [couponCode, setCouponCode] = useState('');
+  const [couponError, setCouponError] = useState('');
   const [taxPreview, setTaxPreview] = useState<{ subtotalCents: number; taxCents: number; totalCents: number } | null>(null);
   const [taxPreviewLoading, setTaxPreviewLoading] = useState(false);
 
@@ -199,6 +208,29 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
       setSelectedSize(inferredSize);
     }
   }, [inferredSize, selectedSize]);
+
+  // Fetch vehicle models from NHTSA when year + make are selected
+  useEffect(() => {
+    if (!vehicle.year?.trim() || !vehicle.make?.trim()) {
+      setVehicleModels([]);
+      return;
+    }
+    let cancelled = false;
+    setVehicleModelsLoading(true);
+    fetchVehicleModels(vehicle.make, vehicle.year)
+      .then((models) => {
+        if (!cancelled) setVehicleModels(models);
+      })
+      .catch(() => {
+        if (!cancelled) setVehicleModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setVehicleModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicle.year, vehicle.make]);
 
   const baseVehicle: VehicleInfo | null =
     usingSavedVehicle && savedVehicle
@@ -320,6 +352,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
         service_id: selectedService.id,
         vehicle: { make: effectiveVehicle.make, model: effectiveVehicle.model, year: effectiveVehicle.year },
         ...customerDetails,
+        coupon_code: couponCode.trim() || undefined,
       });
       const totalCents = result.total_cents ?? result.amount_cents ?? amountCents;
       const subtotalCents = result.subtotal_cents ?? result.amount_cents ?? amountCents;
@@ -337,7 +370,13 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Payment failed';
       console.error('createPaymentIntent failed:', err);
-      setPaymentError(message);
+      if (message.toLowerCase().includes('coupon') || message.toLowerCase().includes('discount') || /invalid.*code/i.test(message)) {
+        setCouponError(message);
+        setPaymentError(null);
+      } else {
+        setCouponError('');
+        setPaymentError(message);
+      }
     } finally {
       setIsProcessingPayment(false);
     }
@@ -367,6 +406,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
       vehicle: effectiveVehicle
         ? { make: effectiveVehicle.make, model: effectiveVehicle.model, year: effectiveVehicle.year }
         : undefined,
+      coupon_code: couponCode.trim().length >= 3 ? couponCode.trim() : undefined,
     })
       .then((res) => {
         if (!cancelled) setTaxPreview({ subtotalCents: res.subtotal_cents, taxCents: res.tax_cents, totalCents: res.total_cents });
@@ -380,11 +420,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     return () => {
       cancelled = true;
     };
-  }, [showPayment, billingZip, billingState, subtotalBeforeTax, selectedService.id, effectiveVehicle?.make, effectiveVehicle?.model, effectiveVehicle?.year]);
+  }, [showPayment, billingZip, billingState, subtotalBeforeTax, selectedService.id, effectiveVehicle?.make, effectiveVehicle?.model, effectiveVehicle?.year, couponCode]);
 
   const handleBackFromPayment = () => {
     setTaxPreview(null);
     setAgreedToCancellationFees(false);
+    setCouponError('');
     setShowPayment(false);
     if (!user) {
       setShowGuestInfo(true);
@@ -655,6 +696,25 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                 </div>
               </div>
 
+              {/* Discount code */}
+              <div className="mb-4">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-2">Have a discount code?</label>
+                <input
+                  type="text"
+                  value={couponCode}
+                  onChange={(e) => {
+                    setCouponCode(e.target.value.toUpperCase());
+                    setCouponError('');
+                  }}
+                  placeholder="Enter code"
+                  className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-black"
+                />
+                {couponError && (
+                  <p className="mt-2 text-sm text-red-600 ml-2">{couponError}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500 ml-2">Discount will be applied at checkout</p>
+              </div>
+
               {/* Payment Method */}
               <div className="mb-6">
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-2">Payment Method</label>
@@ -696,6 +756,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                   <Elements stripe={stripePromise}>
                     <GuestCardPaymentForm
                       amountCents={Math.round(subtotalBeforeTax * 100)}
+                      couponCode={couponCode.trim() || undefined}
                       customerDetails={
                         (billingZip.trim() || billingState.trim()) && billingState.trim()
                           ? {
@@ -741,7 +802,15 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                             : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }
                         );
                       }}
-                      onError={setPaymentError}
+                      onError={(msg) => {
+                        if (msg && /coupon|discount|invalid.*code/i.test(msg)) {
+                          setCouponError(msg);
+                          setPaymentError(null);
+                        } else {
+                          setCouponError('');
+                          setPaymentError(msg);
+                        }
+                      }}
                       isProcessing={isProcessingPayment}
                       setProcessing={setIsProcessingPayment}
                       payButtonLabel={`Pay ${taxPreview ? (taxPreview.totalCents / 100).toFixed(2) : subtotalBeforeTax.toFixed(2)} & Book`}
@@ -1027,7 +1096,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Year</label>
                       <select
                         value={vehicle.year}
-                        onChange={(e) => setVehicle((v) => ({ ...v, year: e.target.value }))}
+                        onChange={(e) => setVehicle((v) => ({ ...v, year: e.target.value, model: '' }))}
                         className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                       >
                         <option value="">Year</option>
@@ -1040,7 +1109,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Make</label>
                       <select
                         value={vehicle.make}
-                        onChange={(e) => setVehicle((v) => ({ ...v, make: e.target.value }))}
+                        onChange={(e) => setVehicle((v) => ({ ...v, make: e.target.value, model: '' }))}
                         className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                       >
                         <option value="">Make</option>
@@ -1055,11 +1124,23 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Model</label>
                       <input
                         type="text"
+                        list="booking-vehicle-models"
                         value={vehicle.model}
                         onChange={(e) => setVehicle((v) => ({ ...v, model: e.target.value }))}
-                        placeholder="e.g. Civic, Camry"
+                        placeholder={
+                          vehicleModelsLoading
+                            ? 'Loading...'
+                            : vehicleModels.length > 0
+                              ? 'Select or type'
+                              : 'e.g. Civic, Camry'
+                        }
                         className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
                       />
+                      <datalist id="booking-vehicle-models">
+                        {vehicleModels.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
                     </div>
                     <div className="flex-1">
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Color (optional)</label>

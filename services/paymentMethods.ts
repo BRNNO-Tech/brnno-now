@@ -122,6 +122,8 @@ export async function createPaymentIntent(params: {
     address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
     address_source?: 'billing' | 'shipping';
   };
+  /** Optional discount/coupon code. */
+  coupon_code?: string;
 }): Promise<CreatePaymentIntentResponse> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
@@ -146,6 +148,8 @@ export async function createPaymentIntentForGuest(params: {
     address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
     address_source?: 'billing' | 'shipping';
   };
+  /** Optional discount/coupon code. */
+  coupon_code?: string;
 }): Promise<CreatePaymentIntentResponse> {
   const { data, error } = await supabase.functions.invoke('create-payment-intent', {
     body: { ...params },
@@ -173,6 +177,8 @@ export async function getTaxPreview(params: {
   };
   service_id?: string;
   vehicle?: { make: string; model: string; year?: string };
+  /** Optional discount/coupon code. */
+  coupon_code?: string;
 }): Promise<TaxPreviewResponse> {
   const { data, error } = await supabase.functions.invoke('create-payment-intent', {
     body: { ...params, preview: true },
