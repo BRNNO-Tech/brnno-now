@@ -53,44 +53,27 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
     const body = await req.json();
-    const paymentMethodId = body?.payment_method_id as string; // Stripe pm_xxx from our DB row
+    const paymentMethodId = body?.payment_method_id as string | undefined;
     const metadata = (body?.metadata as Record<string, string>) ?? {};
     const serviceId = body?.service_id as string | undefined;
     const vehicle = body?.vehicle as { make?: string; model?: string; year?: string } | undefined;
+    const customerDetails = body?.customer_details as {
+      address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
+      address_source?: 'billing' | 'shipping';
+    } | undefined;
 
     let amountCents: number;
-    if (serviceId && vehicle?.make != null && vehicle?.model != null) {
+    const clientAmountCents = Math.round(Number(body?.amount_cents ?? 0));
+    if (clientAmountCents >= 50) {
+      amountCents = clientAmountCents;
+    } else if (serviceId && vehicle?.make != null && vehicle?.model != null) {
       const size = inferVehicleSize(String(vehicle.make), String(vehicle.model));
       const row = PRICING_MATRIX[serviceId];
       const price = row?.[size] ?? 0;
       amountCents = Math.round(price * 100);
     } else {
-      amountCents = Math.round(Number(body?.amount_cents));
+      amountCents = clientAmountCents;
     }
 
     if (!amountCents || amountCents < 50) {
@@ -100,9 +83,133 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Tax preview only: return subtotal/tax/total for display before payment. No PaymentIntent created.
+    const isPreview = body?.preview === true;
+    if (isPreview) {
+      const subtotalCents = amountCents;
+      let totalCents = amountCents;
+      let taxCents = 0;
+      const addr = customerDetails?.address;
+      const hasAddress =
+        addr &&
+        typeof addr.country === 'string' &&
+        addr.country.length >= 2 &&
+        (typeof addr.state === 'string' || typeof addr.postal_code === 'string');
+      if (hasAddress && addr) {
+        try {
+          const calculation = await stripe.tax.calculations.create({
+            currency: 'usd',
+            line_items: [{ amount: subtotalCents, reference: serviceId ?? 'service', tax_code: 'txcd_10103001' }],
+            customer_details: {
+              address: {
+                country: (addr.country ?? 'US').toUpperCase().slice(0, 2),
+                ...(addr.line1 && { line1: String(addr.line1).slice(0, 200) }),
+                ...(addr.city && { city: String(addr.city).slice(0, 100) }),
+                ...(addr.state && { state: String(addr.state).slice(0, 100) }),
+                ...(addr.postal_code && { postal_code: String(addr.postal_code).slice(0, 20) }),
+              },
+              address_source: customerDetails?.address_source ?? 'shipping',
+            },
+          });
+          taxCents = calculation.tax_amount_exclusive ?? 0;
+          totalCents = calculation.amount_total ?? subtotalCents;
+        } catch (taxErr: unknown) {
+          console.error('Stripe tax.calculations.create error (preview):', taxErr);
+        }
+      }
+      return new Response(
+        JSON.stringify({
+          subtotal_cents: subtotalCents,
+          tax_cents: taxCents,
+          total_cents: totalCents,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const authHeader = req.headers.get('Authorization');
+    const isGuest = !authHeader || !paymentMethodId;
+
+    // Guest checkout: create PaymentIntent with client_secret for frontend to confirm with card.
+    if (isGuest) {
+      const subtotalCents = amountCents;
+      let totalCents = amountCents;
+      let taxCents = 0;
+      let taxCalculationId: string | null = null;
+      const addr = customerDetails?.address;
+      const hasAddress =
+        addr &&
+        typeof addr.country === 'string' &&
+        addr.country.length >= 2 &&
+        (typeof addr.state === 'string' || typeof addr.postal_code === 'string');
+      if (hasAddress && addr) {
+        try {
+          const calculation = await stripe.tax.calculations.create({
+            currency: 'usd',
+            line_items: [{ amount: subtotalCents, reference: serviceId ?? 'service', tax_code: 'txcd_10103001' }],
+            customer_details: {
+              address: {
+                country: (addr.country ?? 'US').toUpperCase().slice(0, 2),
+                ...(addr.line1 && { line1: String(addr.line1).slice(0, 200) }),
+                ...(addr.city && { city: String(addr.city).slice(0, 100) }),
+                ...(addr.state && { state: String(addr.state).slice(0, 100) }),
+                ...(addr.postal_code && { postal_code: String(addr.postal_code).slice(0, 20) }),
+              },
+              address_source: customerDetails?.address_source ?? 'shipping',
+            },
+          });
+          taxCents = calculation.tax_amount_exclusive ?? 0;
+          totalCents = calculation.amount_total ?? subtotalCents;
+          taxCalculationId = calculation.id;
+        } catch (taxErr: unknown) {
+          console.error('Stripe tax.calculations.create error:', taxErr);
+        }
+      }
+      const piParams: Stripe.PaymentIntentCreateParams = {
+        amount: totalCents,
+        currency: 'usd',
+        capture_method: 'manual',
+        confirm: false,
+        automatic_payment_methods: { enabled: true },
+        metadata: { ...metadata },
+      };
+      if (taxCalculationId) {
+        (piParams as Record<string, unknown>).hooks = { inputs: { tax: { calculation: taxCalculationId } } };
+      }
+      const paymentIntent = await stripe.paymentIntents.create(piParams);
+      return new Response(
+        JSON.stringify({
+          id: paymentIntent.id,
+          client_secret: paymentIntent.client_secret,
+          status: paymentIntent.status,
+          amount_cents: subtotalCents,
+          subtotal_cents: subtotalCents,
+          tax_cents: taxCents,
+          total_cents: totalCents,
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (!paymentMethodId) {
       return new Response(JSON.stringify({ error: 'Missing payment_method_id' }), {
         status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader! } } }
+    );
+
+    const { data: { user }, error: userError } = await supabase.auth.getUser(
+      authHeader!.replace('Bearer ', '')
+    );
+    if (userError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -166,19 +273,68 @@ Deno.serve(async (req) => {
       );
     }
 
+    const subtotalCents = amountCents;
+    let totalCents = amountCents;
+    let taxCents = 0;
+    let taxCalculationId: string | null = null;
+
+    const addr = customerDetails?.address;
+    const hasAddress =
+      addr &&
+      typeof addr.country === 'string' &&
+      addr.country.length >= 2 &&
+      (typeof addr.state === 'string' || typeof addr.postal_code === 'string');
+
+    if (hasAddress && addr) {
+      try {
+        const calculation = await stripe.tax.calculations.create({
+          currency: 'usd',
+          line_items: [
+            {
+              amount: subtotalCents,
+              reference: serviceId ?? 'service',
+              tax_code: 'txcd_10103001',
+            },
+          ],
+          customer_details: {
+            address: {
+              country: (addr.country ?? 'US').toUpperCase().slice(0, 2),
+              ...(addr.line1 && { line1: String(addr.line1).slice(0, 200) }),
+              ...(addr.city && { city: String(addr.city).slice(0, 100) }),
+              ...(addr.state && { state: String(addr.state).slice(0, 100) }),
+              ...(addr.postal_code && { postal_code: String(addr.postal_code).slice(0, 20) }),
+            },
+            address_source: customerDetails?.address_source ?? 'shipping',
+          },
+        });
+        taxCents = calculation.tax_amount_exclusive ?? 0;
+        totalCents = calculation.amount_total ?? subtotalCents;
+        taxCalculationId = calculation.id;
+      } catch (taxErr: unknown) {
+        console.error('Stripe tax.calculations.create error:', taxErr);
+        // Fall back to no tax; total remains subtotal
+      }
+    }
+
     let paymentIntent: Stripe.PaymentIntent;
+    const piParams: Stripe.PaymentIntentCreateParams = {
+      amount: totalCents,
+      currency: 'usd',
+      capture_method: 'manual',
+      customer: customerId,
+      payment_method: stripePmId,
+      confirm: true,
+      setup_future_usage: 'off_session',
+      automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
+      metadata: { supabase_user_id: user.id, ...metadata },
+    };
+    if (taxCalculationId) {
+      (piParams as Record<string, unknown>).hooks = {
+        inputs: { tax: { calculation: taxCalculationId } },
+      };
+    }
     try {
-      paymentIntent = await stripe.paymentIntents.create({
-        amount: amountCents,
-        currency: 'usd',
-        capture_method: 'manual',
-        customer: customerId,
-        payment_method: stripePmId,
-        confirm: true,
-        setup_future_usage: 'off_session',
-        automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
-        metadata: { supabase_user_id: user.id, ...metadata },
-      });
+      paymentIntent = await stripe.paymentIntents.create(piParams);
     } catch (stripeErr: unknown) {
       const message = stripeErr instanceof Error ? stripeErr.message : 'Stripe error';
       console.error('Stripe paymentIntents.create error:', stripeErr);
@@ -201,7 +357,10 @@ Deno.serve(async (req) => {
         id: paymentIntent.id,
         status: paymentIntent.status,
         client_secret: paymentIntent.client_secret,
-        amount_cents: amountCents,
+        amount_cents: subtotalCents,
+        subtotal_cents: subtotalCents,
+        tax_cents: taxCents,
+        total_cents: totalCents,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

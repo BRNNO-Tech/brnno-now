@@ -58,6 +58,28 @@ export function getServicePrice(serviceId: string, vehicleSize: VehicleSize): nu
   return row[vehicleSize] ?? 0;
 }
 
+/** Add-ons: optional extras with fixed price (USD). */
+export const ADD_ONS: { id: string; name: string; price: number }[] = [
+  { id: 'pet-hair', name: 'Pet hair removal', price: 25 },
+  { id: 'engine-bay', name: 'Engine bay wipe', price: 20 },
+  { id: 'odor', name: 'Odor treatment', price: 35 },
+  { id: 'headlight', name: 'Headlight restoration', price: 45 },
+];
+
+/** Dirtiness / condition levels: label and upcharge in USD (protects detailers). */
+export type DirtinessLevel = 'light' | 'normal' | 'heavy' | 'extreme';
+
+export const DIRTINESS_LEVELS: { id: DirtinessLevel; label: string; upcharge: number }[] = [
+  { id: 'light', label: 'Light', upcharge: 0 },
+  { id: 'normal', label: 'Normal', upcharge: 0 },
+  { id: 'heavy', label: 'Heavy', upcharge: 15 },
+  { id: 'extreme', label: 'Extreme', upcharge: 30 },
+];
+
+export function getDirtinessUpcharge(level: DirtinessLevel): number {
+  return DIRTINESS_LEVELS.find((d) => d.id === level)?.upcharge ?? 0;
+}
+
 export const MOCK_DETAILERS: Detailer[] = [
   {
     id: 'd1',

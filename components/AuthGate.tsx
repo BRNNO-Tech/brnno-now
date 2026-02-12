@@ -5,7 +5,7 @@ import { getUserRoles, addRole } from '../lib/auth-helpers';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate();
-  const { user, loading, signIn, signUp } = useAuth();
+  const { user, loading, signIn, signUp, signOut } = useAuth();
   const grantCustomerRoleAfterSignInRef = useRef(false);
   const [hasCustomerRole, setHasCustomerRole] = useState<boolean | null>(null);
   const [mode, setMode] = useState<'login' | 'signup'>('login');
@@ -15,6 +15,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [addingRole, setAddingRole] = useState(false);
 
   useEffect(() => {
     if (!user?.id) {
@@ -25,7 +26,12 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       grantCustomerRoleAfterSignInRef.current = false;
       addRole(user.id, 'customer')
         .then(() => setHasCustomerRole(true))
-        .catch(() => setHasCustomerRole(false));
+        .catch(() => {
+          // Role might already exist (e.g. from a previous signup); re-fetch and allow in if they have it
+          getUserRoles(user.id).then((roles) => {
+            setHasCustomerRole(roles.includes('customer'));
+          }).catch(() => setHasCustomerRole(false));
+        });
       return;
     }
     getUserRoles(user.id)
@@ -52,6 +58,10 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
+  if (!user) {
+    return <>{children}</>;
+  }
+
   if (user && hasCustomerRole === true) {
     return <>{children}</>;
   }
@@ -62,6 +72,54 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-gray-200 border-t-black rounded-full animate-spin mx-auto mb-4" />
           <p className="font-bold text-gray-600">Checking access…</p>
+        </div>
+      </div>
+    );
+  }
+
+  const handleAddCustomerRole = async () => {
+    if (!user?.id) return;
+    setAddingRole(true);
+    setError(null);
+    try {
+      await addRole(user.id, 'customer');
+      setHasCustomerRole(true);
+    } catch {
+      const roles = await getUserRoles(user.id).catch(() => []);
+      if (roles.includes('customer')) setHasCustomerRole(true);
+      else setError('Could not add customer access. Try signing out and back in.');
+    } finally {
+      setAddingRole(false);
+    }
+  };
+
+  if (user && hasCustomerRole === false) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-gray-100 p-6">
+        <div className="w-full max-w-sm">
+          <p className="text-center text-sm text-gray-600 mb-4">
+            You’re signed in. Add customer access to continue.
+          </p>
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 text-sm font-medium rounded-2xl px-4 py-2 mb-4">
+              {error}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleAddCustomerRole}
+            disabled={addingRole}
+            className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed mb-4"
+          >
+            {addingRole ? 'Adding access…' : 'Continue as customer'}
+          </button>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="w-full text-gray-600 text-sm font-bold hover:text-black transition-colors"
+          >
+            Sign out
+          </button>
         </div>
       </div>
     );
@@ -88,7 +146,14 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         if (isAlreadyRegistered) {
           const { error: signInErr } = await signIn(email, password);
           if (signInErr) {
-            setError('That email is already registered. Sign in with your password.');
+            const msg = signInErr.message ?? '';
+            if (/invalid|credentials|password/i.test(msg)) {
+              setError('That email is already registered. Sign in with your password. (Wrong password?)');
+            } else if (/confirm|verification/i.test(msg)) {
+              setError('Please check your email and click the confirmation link, then sign in.');
+            } else {
+              setError(msg || 'That email is already registered. Sign in with your password.');
+            }
           } else {
             grantCustomerRoleAfterSignInRef.current = true;
             setMessage('That email is already registered. Signed you in.');

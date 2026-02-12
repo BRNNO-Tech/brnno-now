@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { hasRole } from '../../lib/auth-helpers';
+import { hasRole, addRole } from '../../lib/auth-helpers';
 import { getDetailerByAuthUserId } from '../../services/detailers';
 
 const DetailerSignIn: React.FC = () => {
@@ -18,22 +18,21 @@ const DetailerSignIn: React.FC = () => {
     if (!user?.id) return;
     setCheckingDetailer(true);
     setRedirectMessage(null);
-    hasRole(user.id, 'detailer')
-      .then((isDetailer) => {
-        if (!isDetailer) {
-          setRedirectMessage('This account is not set up as a detailer. Redirecting to main app.');
-          setTimeout(() => navigate('/', { replace: true }), 2200);
-          return;
-        }
-        return getDetailerByAuthUserId(user.id);
-      })
+    getDetailerByAuthUserId(user.id)
       .then((d) => {
         if (d) {
+          addRole(user.id, 'detailer').catch(() => {});
           navigate('/detailer/dashboard', { replace: true });
-        } else if (d !== undefined) {
-          setRedirectMessage('No detailer profile found. Redirecting to main app.');
-          setTimeout(() => navigate('/', { replace: true }), 2200);
+          return;
         }
+        return hasRole(user.id, 'detailer').then((isDetailer) => {
+          if (isDetailer) {
+            setRedirectMessage('No detailer profile found. Redirecting to main app.');
+          } else {
+            setRedirectMessage('This account is not set up as a detailer. Redirecting to main app.');
+          }
+          setTimeout(() => navigate('/', { replace: true }), 2200);
+        });
       })
       .catch(() => {
         setRedirectMessage('Something went wrong. Redirecting to main app.');

@@ -24,6 +24,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
   const [highlight, setHighlight] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showArrivedBanner, setShowArrivedBanner] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   
   // Chat state
   const [showChat, setShowChat] = useState(false);
@@ -135,6 +136,27 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 p-4 z-30">
+        {minimized ? (
+          /* Minimized bar: tap to expand and see map */
+          <button
+            type="button"
+            onClick={() => setMinimized(false)}
+            className="w-full max-w-md mx-auto glass rounded-2xl shadow-lg border border-white/50 px-4 py-3 flex items-center justify-between gap-3 active:scale-[0.98] transition-transform"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse flex-shrink-0" />
+              <span className={`font-bold text-sm truncate ${isArrived ? 'text-green-600' : 'text-black'}`}>
+                {getStatusText()}
+              </span>
+              <span className="text-gray-500 text-sm truncate">· {detailer.name}</span>
+            </div>
+            <span className="text-gray-400 flex-shrink-0" aria-hidden>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 15l7-7 7 7" />
+              </svg>
+            </span>
+          </button>
+        ) : (
         <div className="glass rounded-3xl shadow-2xl overflow-hidden max-w-md mx-auto border border-white/50">
           <div className="p-6">
             <div className="flex justify-between items-start mb-6">
@@ -152,9 +174,21 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
                 </div>
                 <p className="text-gray-500 text-sm font-medium">{service.name} at Home</p>
               </div>
-              <div className="bg-black text-white px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
-                 <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
-                 LIVE
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMinimized(true)}
+                  className="w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center active:scale-90 transition-all"
+                  aria-label="Minimize to view map"
+                >
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                <div className="bg-black text-white px-3 py-1 rounded-lg text-sm font-bold flex items-center gap-2">
+                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+                   LIVE
+                </div>
               </div>
             </div>
 
@@ -167,7 +201,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
                 <div className={`w-16 h-16 rounded-2xl overflow-hidden shadow-md transition-all duration-500 transform ${
                   highlight ? 'scale-110 rotate-2' : 'scale-100 rotate-0'
                 } ${isArrived ? 'ring-4 ring-green-400 ring-offset-2' : 'ring-0'}`}>
-                  <img src={detailer.avatar} alt={detailer.name} className="w-full h-full object-cover" />
+                  <img src={detailer.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(detailer.name || '')}&background=e5e7eb&color=374151`} alt={detailer.name} className="w-full h-full object-cover" />
                 </div>
                 {highlight && (
                   <div className="absolute inset-0 rounded-2xl animate-ping border-4 border-blue-400 opacity-20 pointer-events-none" />
@@ -244,6 +278,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Chat Interface Modal */}
@@ -254,7 +289,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
             <div className="flex items-center gap-4">
               <div className="relative">
                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white shadow-lg">
-                  <img src={detailer.avatar} alt={detailer.name} className="w-full h-full object-cover" />
+                  <img src={detailer.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(detailer.name || '')}&background=e5e7eb&color=374151`} alt={detailer.name} className="w-full h-full object-cover" />
                 </div>
                 <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
               </div>
@@ -363,7 +398,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
                 <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Professional</h4>
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-xl overflow-hidden">
-                    <img src={detailer.avatar} alt={detailer.name} className="w-full h-full object-cover" />
+                    <img src={detailer.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(detailer.name || '')}&background=e5e7eb&color=374151`} alt={detailer.name} className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-grow">
                     <p className="font-black text-base">{detailer.name}</p>

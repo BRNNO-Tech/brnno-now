@@ -758,7 +758,7 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
           <div className="glass rounded-[32px] p-4 shadow-2xl border border-white/60">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-inner flex-shrink-0">
-                <img src={selectedDetailer.avatar} alt={selectedDetailer.name} className="w-full h-full object-cover" />
+                <img src={selectedDetailer.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedDetailer.name || '')}&background=e5e7eb&color=374151`} alt={selectedDetailer.name} className="w-full h-full object-cover" />
               </div>
               <div className="flex-grow">
                 <div className="flex justify-between items-start">

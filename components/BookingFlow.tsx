@@ -1,40 +1,182 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { SERVICES, VEHICLE_SIZES, VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS, getServicePrice } from '../constants';
+import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import { SERVICES, VEHICLE_SIZES, VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS, getServicePrice, ADD_ONS, DIRTINESS_LEVELS, getDirtinessUpcharge, type DirtinessLevel } from '../constants';
 import { Service, VehicleInfo, vehicleDisplayString, type VehicleSize } from '../types';
 import { inferVehicleSize, isSizeSmallerThan } from '../utils/vehicleSize';
 import { loadSavedVehicle, saveSavedVehicle } from '../utils/savedVehicle';
 import { getDetailingRecommendation } from '../services/gemini';
-import { createPaymentIntent } from '../services/paymentMethods';
+import { createPaymentIntent, createPaymentIntentForGuest, getTaxPreview } from '../services/paymentMethods';
 import type { PaymentMethodDisplay } from '../services/paymentMethods';
+import { stripePromise } from '../lib/stripe';
+
+export interface GuestInfo {
+  guestName: string;
+  guestEmail: string;
+  guestPhone: string;
+}
 
 interface BookingFlowProps {
-  onConfirm: (service: Service, scheduledAt?: string, vehicle?: VehicleInfo | null, chargedAmountCents?: number, paymentIntentId?: string) => void;
+  onConfirm: (
+    service: Service,
+    scheduledAt?: string,
+    vehicle?: VehicleInfo | null,
+    totalCents?: number,
+    paymentIntentId?: string,
+    taxCents?: number,
+    subtotalCents?: number,
+    addOnIds?: string[],
+    dirtinessLevel?: string,
+    guestInfo?: GuestInfo | null
+  ) => void;
   onClose?: () => void;
   paymentMethods?: PaymentMethodDisplay[];
   defaultPaymentMethod?: PaymentMethodDisplay;
+  /** When null/undefined, guest info step is shown before payment. When set (logged-in user), that step is skipped. */
+  user?: { id?: string } | null;
 }
 
 const currentYear = new Date().getFullYear();
 const emptyVehicle: VehicleInfo = { year: String(currentYear), make: '', model: '', color: '' };
 
-const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMethods = [], defaultPaymentMethod }) => {
+const CARD_ELEMENT_OPTIONS = {
+  style: {
+    base: { fontSize: '16px', fontFamily: 'system-ui, sans-serif', '::placeholder': { color: '#9ca3af' } },
+  },
+};
+
+function GuestCardPaymentForm({
+  amountCents,
+  customerDetails,
+  metadata,
+  serviceId,
+  vehicle,
+  agreedToCancellationFees,
+  subtotalDisplay,
+  onSuccess,
+  onError,
+  isProcessing,
+  setProcessing,
+  payButtonLabel,
+  billingValid = true,
+}: {
+  amountCents: number;
+  customerDetails?: { address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string }; address_source?: 'billing' | 'shipping' };
+  metadata?: Record<string, string>;
+  serviceId?: string;
+  vehicle?: { make: string; model: string; year?: string };
+  agreedToCancellationFees: boolean;
+  subtotalDisplay: number;
+  onSuccess: (paymentIntentId: string, totalCents: number, subtotalCents: number, taxCents: number) => void;
+  onError: (message: string | null) => void;
+  isProcessing: boolean;
+  setProcessing: (v: boolean) => void;
+  payButtonLabel: string;
+  billingValid?: boolean;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+
+  const handlePay = async () => {
+    if (!stripe || !elements || !agreedToCancellationFees) return;
+    const cardEl = elements.getElement(CardElement);
+    if (!cardEl) {
+      onError('Enter your card details.');
+      return;
+    }
+    onError(null);
+    setProcessing(true);
+    try {
+      const result = await createPaymentIntentForGuest({
+        amount_cents: amountCents,
+        metadata,
+        service_id: serviceId,
+        vehicle,
+        customer_details: customerDetails,
+      });
+      const clientSecret = result.client_secret;
+      if (!clientSecret) throw new Error('No client_secret');
+      const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+        payment_method: { card: cardEl },
+      });
+      if (error) {
+        onError(error.message ?? 'Payment failed');
+        return;
+      }
+      const totalCents = result.total_cents ?? result.amount_cents ?? amountCents;
+      const subtotalCents = result.subtotal_cents ?? result.amount_cents ?? amountCents;
+      const taxCents = result.tax_cents ?? 0;
+      const id = paymentIntent?.id ?? result.id;
+      if (id) onSuccess(id, totalCents, subtotalCents, taxCents);
+      else onError('Payment completed but no intent id');
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Payment failed');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white border-2 border-gray-100 rounded-2xl p-4">
+        <CardElement options={CARD_ELEMENT_OPTIONS} className="bg-white rounded-xl" />
+      </div>
+      <button
+        type="button"
+        onClick={handlePay}
+        disabled={isProcessing || !agreedToCancellationFees || !billingValid}
+        title={
+          !billingValid
+            ? 'Enter ZIP and state for tax'
+            : !agreedToCancellationFees
+              ? 'Please agree to the cancellation fee schedule'
+              : undefined
+        }
+        className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isProcessing ? (
+          <>
+            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            Processing...
+          </>
+        ) : (
+          payButtonLabel
+        )}
+      </button>
+    </div>
+  );
+}
+
+const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMethods = [], defaultPaymentMethod, user }) => {
   const [selectedSize, setSelectedSize] = useState<VehicleSize>('sedan');
   const [selectedId, setSelectedId] = useState<string>(SERVICES[0].id);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState<{ recommendation: string; reasoning: string } | null>(null);
+  const [aiResult, setAiResult] = useState<{ recommendation: string; reasoning: string; serviceId?: string; suggestedCondition?: string } | null>(null);
   const [carInfo, setCarInfo] = useState('');
+  const [conditionDescription, setConditionDescription] = useState('');
   const [showAiInput, setShowAiInput] = useState(false);
   const [viewingDetailService, setViewingDetailService] = useState<Service | null>(null);
+  const [showAddOns, setShowAddOns] = useState(false);
+  const [showGuestInfo, setShowGuestInfo] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestEmail, setGuestEmail] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [selectedAddOnIds, setSelectedAddOnIds] = useState<string[]>([]);
+  const [dirtinessLevel, setDirtinessLevel] = useState<DirtinessLevel>('normal');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
+  const [agreedToCancellationFees, setAgreedToCancellationFees] = useState(false);
 
   const [vehicle, setVehicle] = useState<VehicleInfo>(emptyVehicle);
   const [saveVehicleForNextTime, setSaveVehicleForNextTime] = useState(false);
   const [savedVehicle, setSavedVehicle] = useState<VehicleInfo | null>(null);
   const [usingSavedVehicle, setUsingSavedVehicle] = useState(false);
   const [vehicleError, setVehicleError] = useState<string | null>(null);
+  const [billingZip, setBillingZip] = useState('');
+  const [billingState, setBillingState] = useState('');
+  const [taxPreview, setTaxPreview] = useState<{ subtotalCents: number; taxCents: number; totalCents: number } | null>(null);
+  const [taxPreviewLoading, setTaxPreviewLoading] = useState(false);
 
   useEffect(() => {
     const saved = loadSavedVehicle();
@@ -86,27 +228,62 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
   const handleAiAsk = async () => {
     if (!carInfo) return;
     setAiLoading(true);
-    const result = await getDetailingRecommendation(carInfo, "A bit dirty after a road trip");
+    const result = await getDetailingRecommendation(carInfo, conditionDescription || 'Normal daily use');
     setAiResult(result);
     setAiLoading(false);
-    
-    // Auto-select recommended service
-    const matched = SERVICES.find(s => s.name.toLowerCase().includes(result.recommendation.toLowerCase()) || result.recommendation.toLowerCase().includes(s.name.toLowerCase()));
-    if (matched) setSelectedId(matched.id);
+    if (result.serviceId && SERVICES.some((s) => s.id === result.serviceId)) {
+      setSelectedId(result.serviceId);
+    } else {
+      const matched = SERVICES.find((s) => s.name.toLowerCase().includes(result.recommendation.toLowerCase()) || result.recommendation.toLowerCase().includes(s.name.toLowerCase()));
+      if (matched) setSelectedId(matched.id);
+    }
+    if (result.suggestedCondition && ['light', 'normal', 'heavy', 'extreme'].includes(result.suggestedCondition)) {
+      setDirtinessLevel(result.suggestedCondition as DirtinessLevel);
+    }
   };
 
   const selectedService = SERVICES.find(s => s.id === selectedId)!;
 
-  const handleContinueToPayment = () => {
+  const handleContinue = () => {
     setVehicleError(null);
     if (!effectiveVehicle) {
       setVehicleError('Please enter vehicle year, make, and model.');
       return;
     }
+    setShowAddOns(true);
+  };
+
+  const handleContinueToPayment = () => {
+    setShowAddOns(false);
+    if (!user) {
+      setShowGuestInfo(true);
+    } else {
+      setShowPayment(true);
+    }
+  };
+
+  const handleContinueFromGuestInfo = () => {
+    if (!guestName.trim() || !guestEmail.trim() || !guestPhone.trim()) return;
+    setShowGuestInfo(false);
     setShowPayment(true);
   };
 
+  const handleBackFromGuestInfo = () => {
+    setShowGuestInfo(false);
+    setShowAddOns(true);
+  };
+
+  const handleBackFromAddOns = () => {
+    setShowAddOns(false);
+  };
+
   const resolvedPrice = getServicePrice(selectedService.id, selectedSize);
+  const addOnsTotal = selectedAddOnIds.reduce(
+    (sum, id) => sum + (ADD_ONS.find((a) => a.id === id)?.price ?? 0),
+    0
+  );
+  const dirtinessUpcharge = getDirtinessUpcharge(dirtinessLevel);
+  const subtotalBeforeTax = resolvedPrice + addOnsTotal + dirtinessUpcharge;
 
   const handlePaymentComplete = async () => {
     console.log('Pay button clicked', { selectedPaymentMethod: !!selectedPaymentMethod, effectiveVehicle: !!effectiveVehicle });
@@ -121,17 +298,33 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     setPaymentError(null);
     setIsProcessingPayment(true);
     try {
-      const amountCents = Math.round(resolvedPrice * 100);
-      console.log('Calling createPaymentIntent...', { amountCents, service_id: selectedService.id });
+      const amountCents = Math.round(subtotalBeforeTax * 100);
+      const customerDetails =
+        (billingZip.trim() || billingState.trim()) && billingState.trim()
+          ? {
+              customer_details: {
+                address: {
+                  country: 'US',
+                  ...(billingZip.trim() && { postal_code: billingZip.trim() }),
+                  ...(billingState.trim() && { state: billingState.trim() }),
+                },
+                address_source: 'billing' as const,
+              },
+            }
+          : undefined;
+      console.log('Calling createPaymentIntent...', { amountCents, service_id: selectedService.id, hasAddress: !!customerDetails });
       const result = await createPaymentIntent({
         amount_cents: amountCents,
         payment_method_id: selectedPaymentMethod.stripePaymentMethodId,
         metadata: { service: selectedService.name },
         service_id: selectedService.id,
         vehicle: { make: effectiveVehicle.make, model: effectiveVehicle.model, year: effectiveVehicle.year },
+        ...customerDetails,
       });
-      const chargedCents = result.amount_cents ?? amountCents;
-      console.log('Payment processed', { amount_cents: chargedCents, amount: `$${(chargedCents / 100).toFixed(2)}`, status: result.status });
+      const totalCents = result.total_cents ?? result.amount_cents ?? amountCents;
+      const subtotalCents = result.subtotal_cents ?? result.amount_cents ?? amountCents;
+      const taxCents = result.tax_cents ?? 0;
+      console.log('Payment processed', { total_cents: totalCents, subtotal_cents: subtotalCents, tax_cents: taxCents, status: result.status });
       if (saveVehicleForNextTime && effectiveVehicle) {
         try {
           saveSavedVehicle(effectiveVehicle);
@@ -140,7 +333,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
         }
       }
       const scheduledAt = bookingMode === 'later' ? `${scheduledDate} ${scheduledTime}` : undefined;
-      onConfirm(selectedService, scheduledAt, effectiveVehicle, chargedCents, result.id);
+      onConfirm(selectedService, scheduledAt, effectiveVehicle, totalCents, result.id, taxCents, subtotalCents, selectedAddOnIds, dirtinessLevel, user ? null : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Payment failed';
       console.error('createPaymentIntent failed:', err);
@@ -150,9 +343,226 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     }
   };
 
+  // Fetch tax preview when on payment step and ZIP + state are filled
+  const billingValid = billingZip.trim().length > 0 && billingState.trim().length >= 2;
+  useEffect(() => {
+    if (!showPayment || !billingValid) {
+      setTaxPreview(null);
+      return;
+    }
+    const amountCents = Math.round(subtotalBeforeTax * 100);
+    let cancelled = false;
+    setTaxPreviewLoading(true);
+    getTaxPreview({
+      amount_cents: amountCents,
+      customer_details: {
+        address: {
+          country: 'US',
+          postal_code: billingZip.trim(),
+          state: billingState.trim(),
+        },
+        address_source: 'billing',
+      },
+      service_id: selectedService.id,
+      vehicle: effectiveVehicle
+        ? { make: effectiveVehicle.make, model: effectiveVehicle.model, year: effectiveVehicle.year }
+        : undefined,
+    })
+      .then((res) => {
+        if (!cancelled) setTaxPreview({ subtotalCents: res.subtotal_cents, taxCents: res.tax_cents, totalCents: res.total_cents });
+      })
+      .catch(() => {
+        if (!cancelled) setTaxPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTaxPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showPayment, billingZip, billingState, subtotalBeforeTax, selectedService.id, effectiveVehicle?.make, effectiveVehicle?.model, effectiveVehicle?.year]);
+
   const handleBackFromPayment = () => {
+    setTaxPreview(null);
+    setAgreedToCancellationFees(false);
     setShowPayment(false);
+    if (!user) {
+      setShowGuestInfo(true);
+    } else {
+      setShowAddOns(true);
+    }
   };
+
+  // Guest info (only when !user)
+  if (showGuestInfo) {
+    return (
+      <>
+        <div className="absolute bottom-0 left-0 right-0 p-4 z-30 max-h-[90vh] flex flex-col">
+          <div
+            className="glass rounded-3xl shadow-2xl overflow-hidden max-w-md mx-auto border border-white/40 flex flex-col max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex-shrink-0 p-6 pb-2">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-xl">Your contact info</h3>
+                <button
+                  onClick={handleBackFromGuestInfo}
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors active:scale-90"
+                  aria-label="Back"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-6 pt-2">
+              <p className="text-sm text-gray-500 mb-6">We&apos;ll send your booking confirmation here. No account needed.</p>
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Full name</label>
+                  <input
+                    type="text"
+                    placeholder="Jane Smith"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Email</label>
+                  <input
+                    type="email"
+                    placeholder="jane@email.com"
+                    value={guestEmail}
+                    onChange={(e) => setGuestEmail(e.target.value)}
+                    className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                  />
+                  <p className="text-xs text-gray-400 mt-1 ml-2">We&apos;ll send your confirmation here</p>
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Phone number</label>
+                  <input
+                    type="tel"
+                    placeholder="(555) 000-0000"
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                  />
+                  <p className="text-xs text-gray-400 mt-1 ml-2">For updates about your detailer</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleContinueFromGuestInfo}
+                disabled={!guestName.trim() || !guestEmail.trim() || !guestPhone.trim()}
+                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Continue to payment
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // Add-ons & Dirtiness Screen
+  if (showAddOns) {
+    return (
+      <>
+        <div className="absolute bottom-0 left-0 right-0 p-4 z-30 max-h-[90vh] flex flex-col">
+          <div
+            className="glass rounded-3xl shadow-2xl overflow-hidden max-w-md mx-auto border border-white/40 flex flex-col max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex-shrink-0 p-6 pb-2">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-xl">Add-ons & condition</h3>
+                <button
+                  onClick={handleBackFromAddOns}
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors active:scale-90"
+                  aria-label="Back"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-6 pt-2">
+              <div className="mb-6">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-2">Add-ons</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  {ADD_ONS.map((addon) => {
+                    const selected = selectedAddOnIds.includes(addon.id);
+                    return (
+                      <button
+                        key={addon.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedAddOnIds((prev) =>
+                            prev.includes(addon.id) ? prev.filter((id) => id !== addon.id) : [...prev, addon.id]
+                          )
+                        }
+                        className={`min-h-[52px] w-full rounded-xl text-left px-3 py-2.5 text-sm font-bold transition-all ${
+                          selected
+                            ? 'bg-black text-white shadow-md border-2 border-black'
+                            : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
+                        }`}
+                      >
+                        <span className="block">{addon.name}</span>
+                        <span className={`block text-[10px] font-medium -mt-0.5 ${selected ? 'opacity-90' : 'opacity-70'}`}>
+                          +${addon.price}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mb-6">
+                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-2">
+                  Vehicle condition
+                </h4>
+                <p className="text-xs text-gray-500 mb-2 ml-2">Heavy or extreme condition may include an upcharge for our detailers.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {DIRTINESS_LEVELS.map((level) => {
+                    const isSelected = dirtinessLevel === level.id;
+                    return (
+                      <button
+                        key={level.id}
+                        type="button"
+                        onClick={() => setDirtinessLevel(level.id)}
+                        className={`min-h-[52px] w-full rounded-xl text-left px-3 py-2.5 text-sm font-bold transition-all ${
+                          isSelected
+                            ? 'bg-black text-white shadow-md border-2 border-black'
+                            : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
+                        }`}
+                      >
+                        <span className="block">{level.label}</span>
+                        {level.upcharge > 0 && (
+                          <span className={`block text-[10px] font-medium -mt-0.5 ${isSelected ? 'opacity-90' : 'opacity-70'}`}>
+                            +${level.upcharge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleContinueToPayment}
+                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform"
+              >
+                Continue to Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   // Payment Review Screen
   if (showPayment) {
@@ -190,6 +600,22 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                     <p className="font-black text-xl">${resolvedPrice.toFixed(2)}</p>
                   </div>
                 </div>
+                {selectedAddOnIds.length > 0 && (
+                  <div className="pt-3 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 font-medium">Add-ons</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {selectedAddOnIds.map((id) => ADD_ONS.find((a) => a.id === id)?.name).filter(Boolean).join(', ')}
+                    </p>
+                  </div>
+                )}
+                {dirtinessUpcharge > 0 && (
+                  <div className="pt-3 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 font-medium">Condition</p>
+                    <p className="text-sm font-bold text-gray-900">
+                      {DIRTINESS_LEVELS.find((d) => d.id === dirtinessLevel)?.label} (+${dirtinessUpcharge.toFixed(2)})
+                    </p>
+                  </div>
+                )}
                 {effectiveVehicle && (
                   <div className="pt-3 border-t border-gray-200">
                     <p className="text-xs text-gray-500 font-medium">Vehicle</p>
@@ -203,6 +629,30 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* Billing address for tax (required) */}
+              <div className="mb-4">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-2">Billing address (for tax)</label>
+                <p className="text-xs text-gray-500 mb-2">ZIP and state required so we can charge the correct sales tax.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="ZIP code"
+                    value={billingZip}
+                    onChange={(e) => setBillingZip(e.target.value)}
+                    className="bg-white border-2 border-gray-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-black"
+                    maxLength={10}
+                  />
+                  <input
+                    type="text"
+                    placeholder="State (e.g. CA)"
+                    value={billingState}
+                    onChange={(e) => setBillingState(e.target.value.toUpperCase().slice(0, 2))}
+                    className="bg-white border-2 border-gray-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-black"
+                    maxLength={2}
+                  />
+                </div>
               </div>
 
               {/* Payment Method */}
@@ -242,10 +692,66 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                       </div>
                     </div>
                   </div>
+                ) : stripePromise ? (
+                  <Elements stripe={stripePromise}>
+                    <GuestCardPaymentForm
+                      amountCents={Math.round(subtotalBeforeTax * 100)}
+                      customerDetails={
+                        (billingZip.trim() || billingState.trim()) && billingState.trim()
+                          ? {
+                              address: {
+                                country: 'US',
+                                ...(billingZip.trim() && { postal_code: billingZip.trim() }),
+                                ...(billingState.trim() && { state: billingState.trim() }),
+                              },
+                              address_source: 'billing' as const,
+                            }
+                          : undefined
+                      }
+                      metadata={{ service: selectedService.name }}
+                      serviceId={selectedService.id}
+                      vehicle={
+                        effectiveVehicle
+                          ? { make: effectiveVehicle.make, model: effectiveVehicle.model, year: effectiveVehicle.year }
+                          : undefined
+                      }
+                      agreedToCancellationFees={agreedToCancellationFees}
+                      subtotalDisplay={subtotalBeforeTax}
+                      onSuccess={(paymentIntentId, totalCents, subtotalCents, taxCents) => {
+                        if (saveVehicleForNextTime && effectiveVehicle) {
+                          try {
+                            saveSavedVehicle(effectiveVehicle);
+                          } catch {
+                            // ignore
+                          }
+                        }
+                        const scheduledAt = bookingMode === 'later' ? `${scheduledDate} ${scheduledTime}` : undefined;
+                        onConfirm(
+                          selectedService,
+                          scheduledAt,
+                          effectiveVehicle ?? null,
+                          totalCents,
+                          paymentIntentId,
+                          taxCents,
+                          subtotalCents,
+                          selectedAddOnIds,
+                          dirtinessLevel,
+                          user
+                            ? undefined
+                            : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }
+                        );
+                      }}
+                      onError={setPaymentError}
+                      isProcessing={isProcessingPayment}
+                      setProcessing={setIsProcessingPayment}
+                      payButtonLabel={`Pay ${taxPreview ? (taxPreview.totalCents / 100).toFixed(2) : subtotalBeforeTax.toFixed(2)} & Book`}
+                      billingValid={billingValid}
+                    />
+                  </Elements>
                 ) : (
                   <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-4 text-center">
                     <p className="text-sm font-bold text-gray-400">No payment method</p>
-                    <p className="text-xs text-gray-400 mt-1">Add a card in your wallet</p>
+                    <p className="text-xs text-gray-400 mt-1">Add a card in your wallet or set VITE_STRIPE_PUBLISHABLE_KEY for guest checkout.</p>
                   </div>
                 )}
               </div>
@@ -256,38 +762,91 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
               {/* Price Breakdown */}
               <div className="mb-6 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 font-medium">Subtotal</span>
+                  <span className="text-gray-600 font-medium">{selectedService.name}</span>
                   <span className="font-bold">${resolvedPrice.toFixed(2)}</span>
                 </div>
+                {selectedAddOnIds.map((id) => {
+                  const addon = ADD_ONS.find((a) => a.id === id);
+                  return addon ? (
+                    <div key={id} className="flex justify-between text-sm">
+                      <span className="text-gray-600 font-medium">{addon.name}</span>
+                      <span className="font-bold">${addon.price.toFixed(2)}</span>
+                    </div>
+                  ) : null;
+                })}
+                {dirtinessUpcharge > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600 font-medium">Condition ({DIRTINESS_LEVELS.find((d) => d.id === dirtinessLevel)?.label})</span>
+                    <span className="font-bold">+${dirtinessUpcharge.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm pt-2 border-t border-gray-200">
+                  <span className="text-gray-600 font-medium">Subtotal</span>
+                  <span className="font-bold">${subtotalBeforeTax.toFixed(2)}</span>
+                </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 font-medium">Service Fee</span>
-                  <span className="font-bold">$0.00</span>
+                  <span className="text-gray-600 font-medium">Tax</span>
+                  <span className="font-bold">
+                    {taxPreviewLoading
+                      ? '...'
+                      : taxPreview
+                        ? `$${(taxPreview.taxCents / 100).toFixed(2)}`
+                        : billingValid
+                          ? '...'
+                          : 'Enter ZIP + state above'}
+                  </span>
                 </div>
                 <div className="pt-2 border-t border-gray-200 flex justify-between">
                   <span className="font-black text-lg">Total</span>
-                  <span className="font-black text-xl">${resolvedPrice.toFixed(2)}</span>
+                  <span className="font-black text-xl">
+                    {taxPreview ? `$${(taxPreview.totalCents / 100).toFixed(2)}` : `$${subtotalBeforeTax.toFixed(2)}`}
+                  </span>
                 </div>
               </div>
 
-              {/* Pay & Book Button - type="button" so it never submits a form; onClick fires the request */}
-              <button
-                type="button"
-                onClick={handlePaymentComplete}
-                disabled={isProcessingPayment || !selectedPaymentMethod}
-                title={!selectedPaymentMethod ? 'Add a payment method in Profile (Wallet & Pay) first' : undefined}
-                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isProcessingPayment ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    Pay ${resolvedPrice.toFixed(2)} & Book
-                  </>
-                )}
-              </button>
+              {/* Cancellation fee disclosure and consent */}
+              <p className="text-xs text-gray-600 font-medium mb-3">
+                Cancellation: Free within 2 min of detailer acceptance; $5 after 2 min; $10 after 5 min.
+              </p>
+              <label className="flex items-start gap-3 cursor-pointer mb-4">
+                <input
+                  type="checkbox"
+                  checked={agreedToCancellationFees}
+                  onChange={(e) => setAgreedToCancellationFees(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <span className="text-sm font-medium text-gray-700">I agree to the cancellation fee schedule above.</span>
+              </label>
+
+              {/* Pay & Book Button - only when using a saved card; guest flow has its own button inside GuestCardPaymentForm */}
+              {paymentMethods.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handlePaymentComplete}
+                  disabled={isProcessingPayment || !selectedPaymentMethod || !agreedToCancellationFees || !billingValid}
+                  title={
+                    !billingValid
+                      ? 'Enter ZIP and state for tax'
+                      : !selectedPaymentMethod
+                        ? 'Add a payment method in Profile (Wallet & Pay) first'
+                        : !agreedToCancellationFees
+                          ? 'Please agree to the cancellation fee schedule'
+                          : undefined
+                  }
+                  className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isProcessingPayment ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      Pay ${subtotalBeforeTax.toFixed(2)} & Book
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -337,6 +896,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                  value={carInfo}
                  onChange={(e) => setCarInfo(e.target.value)}
                />
+               <input 
+                 className="w-full bg-white border border-blue-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 mb-2"
+                 placeholder="How dirty is it? (e.g. Normal, heavy pet hair, road trip)"
+                 value={conditionDescription}
+                 onChange={(e) => setConditionDescription(e.target.value)}
+               />
                <button 
                  onClick={handleAiAsk}
                  disabled={aiLoading}
@@ -348,6 +913,9 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                  <div className="mt-3 text-xs bg-white/80 p-2 rounded-lg border border-blue-100 animate-in fade-in slide-in-from-top-1">
                    <p className="font-bold text-blue-800">Recommendation: {aiResult.recommendation}</p>
                    <p className="text-gray-600 italic mt-1">{aiResult.reasoning}</p>
+                   {aiResult.suggestedCondition && (
+                     <p className="text-gray-500 mt-1">Suggested condition: {aiResult.suggestedCondition}</p>
+                   )}
                  </div>
                )}
             </div>
@@ -566,18 +1134,10 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
           </div>
 
           <button 
-            onClick={handleContinueToPayment}
+            onClick={handleContinue}
             className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform flex items-center justify-center gap-2"
           >
-            {bookingMode === 'now' ? (
-              <>
-                Continue to Payment
-              </>
-            ) : (
-              <>
-                Continue to Payment
-              </>
-            )}
+            Continue
           </button>
         </div>
       </div>

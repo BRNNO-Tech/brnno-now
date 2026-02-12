@@ -38,5 +38,8 @@ export async function submitDetailerApplication(
     message: input.message?.trim() || null,
     user_id: input.user_id || null,
   });
-  return { error: error ?? null };
+  if (error) {
+    return { error: new Error(error.message || 'Failed to submit application') };
+  }
+  return { error: null };
 }

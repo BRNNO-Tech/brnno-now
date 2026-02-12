@@ -100,6 +100,16 @@ export async function removePaymentMethod(id: string): Promise<void> {
   if (error) throw error;
 }
 
+export interface CreatePaymentIntentResponse {
+  id: string;
+  status: string;
+  client_secret?: string;
+  amount_cents?: number;
+  subtotal_cents?: number;
+  tax_cents?: number;
+  total_cents?: number;
+}
+
 export async function createPaymentIntent(params: {
   amount_cents: number;
   payment_method_id: string;
@@ -107,7 +117,12 @@ export async function createPaymentIntent(params: {
   /** When provided with vehicle, server computes amount for fair pricing. */
   service_id?: string;
   vehicle?: { make: string; model: string; year?: string };
-}): Promise<{ id: string; status: string; client_secret?: string; amount_cents?: number }> {
+  /** Optional address for Stripe Tax calculation; when provided, tax may be added to total. */
+  customer_details?: {
+    address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
+    address_source?: 'billing' | 'shipping';
+  };
+}): Promise<CreatePaymentIntentResponse> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
     throw new Error('Please log in to pay.');
@@ -118,7 +133,53 @@ export async function createPaymentIntent(params: {
   });
   if (error) throw error;
   if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Payment failed');
-  return data as { id: string; status: string; client_secret?: string; amount_cents?: number };
+  return data as CreatePaymentIntentResponse;
+}
+
+/** Guest checkout: create PaymentIntent without a saved card; returns client_secret for Stripe.js confirmCardPayment. */
+export async function createPaymentIntentForGuest(params: {
+  amount_cents: number;
+  metadata?: Record<string, string>;
+  service_id?: string;
+  vehicle?: { make: string; model: string; year?: string };
+  customer_details?: {
+    address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
+    address_source?: 'billing' | 'shipping';
+  };
+}): Promise<CreatePaymentIntentResponse> {
+  const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+    body: { ...params },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Payment failed');
+  if (!(data as CreatePaymentIntentResponse).client_secret) {
+    throw new Error('No client_secret returned');
+  }
+  return data as CreatePaymentIntentResponse;
+}
+
+export interface TaxPreviewResponse {
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+}
+
+/** Get tax/total preview for display before payment. Requires amount_cents and customer_details with address (ZIP + state). */
+export async function getTaxPreview(params: {
+  amount_cents: number;
+  customer_details: {
+    address?: { line1?: string; city?: string; state?: string; postal_code?: string; country?: string };
+    address_source?: 'billing' | 'shipping';
+  };
+  service_id?: string;
+  vehicle?: { make: string; model: string; year?: string };
+}): Promise<TaxPreviewResponse> {
+  const { data, error } = await supabase.functions.invoke('create-payment-intent', {
+    body: { ...params, preview: true },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Tax preview failed');
+  return data as TaxPreviewResponse;
 }
 
 export async function capturePayment(paymentIntentId: string): Promise<{ id: string; status: string }> {

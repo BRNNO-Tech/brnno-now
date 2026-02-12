@@ -8,7 +8,7 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<{ data: { user: User } | null; error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -48,7 +48,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!error && data?.user) {
       addRole(data.user.id, 'customer').catch(() => {});
     }
-    return { error: error ?? null };
+    return { data: data ?? null, error: error ?? null };
   };
 
   const signOut = async () => {

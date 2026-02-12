@@ -8,16 +8,10 @@ import { UserProfile } from '../types';
 import { getServicePrice } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
 import { listPaymentMethods, capturePayment, cancelPayment, type PaymentMethodDisplay } from '../services/paymentMethods';
-import { createBooking, updateBookingStatus, getBookingById } from '../services/bookings';
+import { supabase } from '../lib/supabase';
+import { createBooking, updateBookingStatus, getBookingById, cancelBooking } from '../services/bookings';
+import { getDetailerLocation } from '../services/detailerLocation';
 
-const FINDING_DETAILER_STEPS = [
-  'Searching for available pros in your area',
-  'Notifying nearby detailers',
-  'Waiting for a pro to accept your request',
-  'A pro accepted! Getting your detailer ready...',
-];
-
-const SEARCH_STEP_INTERVAL_MS = 1500;
 const POLL_INTERVAL_MS = 2500;
 
 function userProfileFromAuth(user: { email?: string | null; user_metadata?: { full_name?: string } }): UserProfile {
@@ -31,22 +25,32 @@ function userProfileFromAuth(user: { email?: string | null; user_metadata?: { fu
 }
 
 const CustomerApp: React.FC = () => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, signUp } = useAuth();
   const userProfile: UserProfile = user ? userProfileFromAuth(user) : { name: '', rating: 0, trips: 0, balance: 0 };
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [status, setStatus] = useState<BookingStatus>(BookingStatus.IDLE);
-  const [searchStep, setSearchStep] = useState(0);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [assignedDetailer, setAssignedDetailer] = useState<Detailer | null>(null);
   const [scheduledTime, setScheduledTime] = useState<string | null>(null);
   const [vehicleInfo, setVehicleInfo] = useState<VehicleInfo | null>(null);
   const [chargedAmountCents, setChargedAmountCents] = useState<number | null>(null);
   const [currentPaymentIntentId, setCurrentPaymentIntentId] = useState<string | null>(null);
+  const [taxCents, setTaxCents] = useState<number | null>(null);
+  const [subtotalCents, setSubtotalCents] = useState<number | null>(null);
+  const [bookingAddOnIds, setBookingAddOnIds] = useState<string[]>([]);
+  const [bookingDirtinessLevel, setBookingDirtinessLevel] = useState<string | null>(null);
+  const [bookingGuestInfo, setBookingGuestInfo] = useState<{ guestName: string; guestEmail: string; guestPhone: string } | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodDisplay[]>([]);
   const [currentBookingId, setCurrentBookingId] = useState<string | null>(null);
+  const [showCreateAccountModal, setShowCreateAccountModal] = useState(false);
+  const [createAccountPassword, setCreateAccountPassword] = useState('');
+  const [createAccountError, setCreateAccountError] = useState<string | null>(null);
+  const [createAccountSubmitting, setCreateAccountSubmitting] = useState(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const stepIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
+  const bookingCreatedForSearchRef = useRef(false);
+  const currentSearchBookingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!user?.id) {
@@ -66,48 +70,55 @@ const CustomerApp: React.FC = () => {
   }, [status, user?.id]);
 
   useEffect(() => {
-    if (status !== BookingStatus.SEARCHING || !user || !selectedService) return;
-
-    setSearchStep(0);
-    stepIntervalRef.current = setInterval(() => {
-      setSearchStep((prev) =>
-        prev < FINDING_DETAILER_STEPS.length - 1 ? prev + 1 : prev
-      );
-    }, SEARCH_STEP_INTERVAL_MS);
+    if (status !== BookingStatus.SEARCHING || !selectedService) return;
 
     let cancelled = false;
     const cost = chargedAmountCents != null ? chargedAmountCents / 100 : getServicePrice(selectedService.id, vehicleInfo?.size ?? 'sedan');
 
     (async () => {
-      if (currentPaymentIntentId) {
-        try {
-          await capturePayment(currentPaymentIntentId);
-        } catch (err) {
-          console.warn('Capture failed; payment may need manual handling:', err);
-        }
-      }
       let bookingId: string | null = null;
-      try {
-        const { id } = await createBooking({
-          userId: user.id,
-          serviceName: selectedService.name,
-          cost,
-          status: 'pending',
-          location: 'At your location',
-          addressZip: null,
-        });
-        bookingId = id;
-        setCurrentBookingId(id);
-        setChargedAmountCents(null);
-        setCurrentPaymentIntentId(null);
-      } catch (err) {
-        console.warn('createBooking failed:', err);
-        if (stepIntervalRef.current) {
-          clearInterval(stepIntervalRef.current);
-          stepIntervalRef.current = null;
+
+      if (bookingCreatedForSearchRef.current && currentSearchBookingIdRef.current) {
+        bookingId = currentSearchBookingIdRef.current;
+      } else {
+        try {
+          const { id } = await createBooking({
+            userId: user?.id ?? null,
+            serviceName: selectedService.name,
+            cost,
+            status: 'pending',
+            detailerName: null,
+            carName: null,
+            location: 'At your location',
+            addressZip: null,
+            payment_intent_id: currentPaymentIntentId ?? null,
+            tax_cents: taxCents ?? null,
+            subtotal_cents: subtotalCents ?? null,
+            add_ons: bookingAddOnIds.length > 0 ? bookingAddOnIds : null,
+            dirtiness_level: bookingDirtinessLevel ?? null,
+            is_guest: !user,
+            guest_name: bookingGuestInfo?.guestName ?? null,
+            guest_email: bookingGuestInfo?.guestEmail ?? null,
+            guest_phone: bookingGuestInfo?.guestPhone ?? null,
+          });
+          bookingId = id;
+          bookingCreatedForSearchRef.current = true;
+          currentSearchBookingIdRef.current = id;
+          setCurrentBookingId(id);
+          setChargedAmountCents(null);
+          setCurrentPaymentIntentId(null);
+          setTaxCents(null);
+          setSubtotalCents(null);
+          setBookingAddOnIds([]);
+          setBookingDirtinessLevel(null);
+          setBookingGuestInfo(null);
+        } catch (err) {
+          console.warn('createBooking failed:', err);
+          return;
         }
-        return;
       }
+
+      if (!bookingId) return;
 
       const poll = async () => {
         if (cancelled || !bookingId) return;
@@ -119,10 +130,8 @@ const CustomerApp: React.FC = () => {
               clearInterval(pollIntervalRef.current);
               pollIntervalRef.current = null;
             }
-            if (stepIntervalRef.current) {
-              clearInterval(stepIntervalRef.current);
-              stepIntervalRef.current = null;
-            }
+            bookingCreatedForSearchRef.current = false;
+            currentSearchBookingIdRef.current = null;
             const detailer: Detailer = {
               id: row.detailer_id,
               name: row.detailer_name,
@@ -153,18 +162,49 @@ const CustomerApp: React.FC = () => {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
-      if (stepIntervalRef.current) {
-        clearInterval(stepIntervalRef.current);
-        stepIntervalRef.current = null;
+    };
+  }, [status, user, selectedService, vehicleInfo, chargedAmountCents, currentPaymentIntentId, taxCents, subtotalCents, bookingAddOnIds, bookingDirtinessLevel]);
+
+  // Poll detailer location when en route so map shows real position
+  useEffect(() => {
+    if (status !== BookingStatus.EN_ROUTE || !assignedDetailer?.id) return;
+
+    const pollDetailerLocation = async () => {
+      const location = await getDetailerLocation(assignedDetailer.id);
+      if (location) {
+        setAssignedDetailer((prev) =>
+          prev ? { ...prev, lat: location.lat, lng: location.lng } : prev
+        );
       }
     };
-  }, [status, user, selectedService, vehicleInfo, chargedAmountCents, currentPaymentIntentId]);
 
-  const handleConfirmBooking = (service: Service, schedule?: string, vehicle?: VehicleInfo | null, amountCents?: number, paymentIntentId?: string) => {
+    pollDetailerLocation();
+    const interval = setInterval(pollDetailerLocation, 10000);
+
+    return () => clearInterval(interval);
+  }, [status, assignedDetailer?.id]);
+
+  const handleConfirmBooking = (
+    service: Service,
+    schedule?: string,
+    vehicle?: VehicleInfo | null,
+    totalCents?: number,
+    paymentIntentId?: string,
+    taxCentsParam?: number,
+    subtotalCentsParam?: number,
+    addOnIds?: string[],
+    dirtinessLevel?: string,
+    guestInfo?: { guestName: string; guestEmail: string; guestPhone: string } | null
+  ) => {
     setSelectedService(service);
     setVehicleInfo(vehicle ?? null);
-    setChargedAmountCents(amountCents ?? null);
+    setChargedAmountCents(totalCents ?? null);
     setCurrentPaymentIntentId(paymentIntentId ?? null);
+    setTaxCents(taxCentsParam ?? null);
+    setSubtotalCents(subtotalCentsParam ?? null);
+    setBookingAddOnIds(addOnIds ?? []);
+    setBookingDirtinessLevel(dirtinessLevel ?? null);
+    setBookingGuestInfo(guestInfo ?? null);
 
     if (schedule) {
       setScheduledTime(schedule);
@@ -175,29 +215,26 @@ const CustomerApp: React.FC = () => {
   };
 
   const handleCancel = async () => {
+    bookingCreatedForSearchRef.current = false;
+    currentSearchBookingIdRef.current = null;
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
-    if (stepIntervalRef.current) {
-      clearInterval(stepIntervalRef.current);
-      stepIntervalRef.current = null;
-    }
-    if (currentPaymentIntentId) {
+    if (currentBookingId) {
+      try {
+        await cancelBooking(currentBookingId);
+      } catch (err) {
+        console.warn('Failed to cancel booking:', err);
+      }
+      setCurrentBookingId(null);
+    } else if (currentPaymentIntentId) {
       try {
         await cancelPayment(currentPaymentIntentId);
       } catch (err) {
         console.warn('Failed to release payment hold:', err);
       }
       setCurrentPaymentIntentId(null);
-    }
-    if (currentBookingId) {
-      try {
-        await updateBookingStatus(currentBookingId, 'cancelled');
-      } catch (err) {
-        console.warn('Failed to mark booking as cancelled:', err);
-      }
-      setCurrentBookingId(null);
     }
     setStatus(BookingStatus.IDLE);
     setSelectedService(null);
@@ -208,8 +245,14 @@ const CustomerApp: React.FC = () => {
   };
 
   const handleComplete = async () => {
+    bookingCreatedForSearchRef.current = false;
+    currentSearchBookingIdRef.current = null;
     if (currentBookingId) {
       try {
+        const row = await getBookingById(currentBookingId);
+        if (row?.payment_intent_id) {
+          await capturePayment(row.payment_intent_id);
+        }
         await updateBookingStatus(currentBookingId, 'completed');
       } catch {
         // continue clearing state
@@ -221,6 +264,39 @@ const CustomerApp: React.FC = () => {
     setAssignedDetailer(null);
     setScheduledTime(null);
     setVehicleInfo(null);
+  };
+
+  const handleCreateAccountSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bookingGuestInfo?.guestEmail || !createAccountPassword.trim()) return;
+    setCreateAccountError(null);
+    setCreateAccountSubmitting(true);
+    try {
+      const { data, error } = await signUp(
+        bookingGuestInfo.guestEmail,
+        createAccountPassword,
+        bookingGuestInfo.guestName
+      );
+      if (error) throw error;
+      if (data?.user?.id) {
+        const { error: updateError } = await supabase
+          .from('detailer_bookings')
+          .update({ converted_user_id: data.user.id })
+          .eq('guest_email', bookingGuestInfo.guestEmail)
+          .is('user_id', null)
+          .is('converted_user_id', null);
+        if (updateError) {
+          console.error('Failed to link guest booking:', updateError);
+        }
+      }
+      setShowCreateAccountModal(false);
+      setCreateAccountPassword('');
+      handleCancel();
+    } catch (err) {
+      setCreateAccountError((err as Error).message || 'Failed to create account');
+    } finally {
+      setCreateAccountSubmitting(false);
+    }
   };
 
   return (
@@ -263,6 +339,7 @@ const CustomerApp: React.FC = () => {
 
       {status === BookingStatus.SELECTING && (
         <BookingFlow
+          user={user ?? undefined}
           onConfirm={handleConfirmBooking}
           onClose={() => setStatus(BookingStatus.IDLE)}
           paymentMethods={paymentMethods}
@@ -272,58 +349,185 @@ const CustomerApp: React.FC = () => {
 
       {status === BookingStatus.SEARCHING && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/60 backdrop-blur-sm px-6">
-          <div className="relative">
-            <div className="w-32 h-32 border-8 border-gray-100 border-t-black rounded-full animate-spin" />
-            <div className="absolute inset-0 flex items-center justify-center text-3xl">✨</div>
+          {/* Spinner */}
+          <div className="relative mb-6">
+            <div className="w-24 h-24 border-8 border-gray-100 border-t-black rounded-full animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center text-3xl">🚗</div>
           </div>
-          <p className="mt-4 text-sm font-semibold text-green-700">Payment processed – finding your detailer</p>
-          <h2 className="mt-4 text-2xl font-black text-center">Finding you the best detailers near you</h2>
-          <div className="mt-6 w-full max-w-sm space-y-3">
-            {FINDING_DETAILER_STEPS.map((step, i) => {
-              const isDone = i < searchStep;
-              const isCurrent = i === searchStep;
-              return (
-                <div
-                  key={i}
-                  className={`flex items-center gap-3 rounded-2xl px-4 py-3 transition-all ${
-                    isCurrent ? 'bg-black/5 border-2 border-black/10' : ''
-                  } ${isDone ? 'opacity-80' : ''}`}
-                >
-                  {isDone ? (
-                    <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                  ) : (
-                    <div className={`w-6 h-6 rounded-full flex-shrink-0 ${isCurrent ? 'border-2 border-black animate-pulse' : 'border-2 border-gray-200'}`} />
-                  )}
-                  <span className={`text-sm font-medium ${isCurrent ? 'text-black font-semibold' : 'text-gray-500'}`}>
-                    {step}
+
+          {/* Heading */}
+          <h2 className="text-2xl font-black text-center mb-2">
+            We&apos;re on it!
+          </h2>
+
+          {/* Subtext */}
+          <p className="text-gray-500 text-center text-sm font-medium max-w-xs mb-8">
+            We&apos;re finding the perfect detailer for you. Sit tight while we process your booking.
+          </p>
+
+          {/* Info card */}
+          <div className="w-full max-w-sm bg-black/5 rounded-2xl p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <span className="text-lg">📱</span>
+              <p className="text-sm text-gray-600">
+                <span className="font-semibold text-black">You&apos;ll hear from us within 10 minutes</span> via text and email once your detailer is confirmed.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-lg">📍</span>
+              <p className="text-sm text-gray-600">
+                <span className="font-semibold text-black">Your detailer comes to you</span> — no need to go anywhere.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-lg">✨</span>
+              <p className="text-sm text-gray-600">
+                <span className="font-semibold text-black">Payment is held securely</span> and only released once the job is complete.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {status === BookingStatus.COMPLETED && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-6">
+          <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in fade-in zoom-in-90 duration-300">
+            {/* Success icon */}
+            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            {/* Heading */}
+            <h2 className="text-3xl font-black mb-2">You&apos;re Booked!</h2>
+
+            {/* Subtext — async messaging for manual dispatch */}
+            <p className="text-gray-500 font-medium mb-2">
+              We&apos;re finding the perfect detailer for you.
+            </p>
+            <p className="text-gray-400 text-sm mb-6">
+              {bookingGuestInfo
+                ? `You'll receive a text and email at ${bookingGuestInfo.guestEmail} within 10 minutes.`
+                : "You'll receive a notification within 10 minutes once confirmed."}
+            </p>
+
+            {/* Booking summary */}
+            <div className="bg-gray-50 rounded-2xl p-4 text-left mb-6 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Service</span>
+                <span className="font-semibold text-black">{selectedService?.name}</span>
+              </div>
+              {scheduledTime && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Scheduled</span>
+                  <span className="font-semibold text-black">
+                    {new Date(scheduledTime.replace(' ', 'T')).toLocaleString([], {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
                   </span>
                 </div>
-              );
-            })}
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Location</span>
+                <span className="font-semibold text-black">At your location</span>
+              </div>
+            </div>
+
+            {/* Guest account creation prompt */}
+            {bookingGuestInfo && (
+              <div className="mb-4 p-4 bg-black/5 rounded-2xl text-left">
+                <p className="text-sm font-semibold text-black mb-1">Save your booking</p>
+                <p className="text-xs text-gray-500 mb-3">
+                  Create an account to track your detail, rebook easily, and manage your vehicle.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateAccountModal(true)}
+                  className="w-full bg-black text-white py-3 rounded-xl font-bold text-sm active:scale-95 transition-transform mb-2"
+                >
+                  Create Account
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="w-full text-gray-400 text-sm py-1"
+                >
+                  Maybe later
+                </button>
+              </div>
+            )}
+
+            {/* Done button — only shows for logged in users */}
+            {!bookingGuestInfo && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform"
+              >
+                Done
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {status === BookingStatus.COMPLETED && scheduledTime && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-6">
-          <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in fade-in zoom-in-90 duration-300">
-            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
-              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-            </div>
-            <h2 className="text-3xl font-black mb-2">Service Booked!</h2>
-            <p className="text-gray-500 font-medium mb-6">
-              Your {selectedService?.name} is scheduled for<br/>
-              <span className="text-black font-bold">{new Date(scheduledTime.replace(' ', 'T')).toLocaleString([], { dateStyle: 'long', timeStyle: 'short' })}</span>
+      {/* Create account modal for guests */}
+      {showCreateAccountModal && bookingGuestInfo && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-md p-6">
+          <div className="bg-white rounded-[40px] p-8 w-full max-w-sm shadow-2xl">
+            <h3 className="text-xl font-black mb-2">Create account</h3>
+            <p className="text-gray-500 text-sm mb-6">
+              Use a password to sign in later and track your booking.
             </p>
+            <form onSubmit={handleCreateAccountSubmit} className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={bookingGuestInfo.guestEmail}
+                  readOnly
+                  className="w-full bg-gray-100 border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium text-gray-600"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={createAccountPassword}
+                  onChange={(e) => setCreateAccountPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                  className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                  autoComplete="new-password"
+                />
+              </div>
+              {createAccountError && (
+                <div className="bg-red-50 border border-red-100 text-red-600 text-sm font-medium rounded-2xl px-4 py-2">
+                  {createAccountError}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={createAccountSubmitting}
+                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {createAccountSubmitting ? 'Creating…' : 'Create Account'}
+              </button>
+            </form>
             <button
-              onClick={handleCancel}
-              className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform"
+              type="button"
+              onClick={() => {
+                setShowCreateAccountModal(false);
+                setCreateAccountError(null);
+                setCreateAccountPassword('');
+              }}
+              className="w-full mt-4 text-gray-500 text-sm font-bold hover:text-black transition-colors"
             >
-              Done
+              Cancel
             </button>
           </div>
         </div>

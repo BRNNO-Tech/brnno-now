@@ -31,6 +31,10 @@ export interface AvailableJob {
   location: string | null;
   address_zip: string | null;
   created_at: string;
+  /** Pre-tax amount (cents); use for payout so tax is not paid to detailer. */
+  subtotal_cents: number | null;
+  add_ons: string[] | null;
+  dirtiness_level: string | null;
 }
 
 export async function getDetailerByAuthUserId(authUserId: string): Promise<DetailerProfile | null> {
@@ -63,7 +67,7 @@ export async function listAvailableJobsForDetailer(
 ): Promise<AvailableJob[]> {
   const { data, error } = await supabase
     .from('detailer_bookings')
-    .select('id, service_name, cost, location, address_zip, created_at')
+    .select('id, service_name, cost, location, address_zip, created_at, subtotal_cents, add_ons, dirtiness_level')
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
 
@@ -96,4 +100,85 @@ export async function acceptJob(bookingId: string, detailer: DetailerProfile): P
     .eq('status', 'pending');
 
   if (error) throw error;
+}
+
+/** Row shape for active jobs and job details (detailer_bookings). */
+export interface ActiveJobRow {
+  id: string;
+  user_id: string;
+  service_name: string;
+  cost: number;
+  status: string;
+  detailer_id: string | null;
+  detailer_name: string | null;
+  car_name: string | null;
+  location: string | null;
+  address_zip: string | null;
+  detailer_assigned_at: string | null;
+  detailer_accepted_at: string | null;
+  detailer_arrived_at: string | null;
+  detailer_completed_at: string | null;
+  detailer_payout: number | null;
+  commission_rate: number | null;
+  subtotal_cents: number | null;
+  tax_cents: number | null;
+  completed_at: string | null;
+  created_at: string;
+  add_ons: string[] | null;
+  dirtiness_level: string | null;
+  is_guest?: boolean;
+  guest_name?: string | null;
+  guest_email?: string | null;
+  guest_phone?: string | null;
+  [key: string]: unknown;
+}
+
+export async function getActiveJobsForDetailer(detailerId: string): Promise<ActiveJobRow[]> {
+  const { data, error } = await supabase
+    .from('detailer_bookings')
+    .select('*')
+    .eq('detailer_id', detailerId)
+    .in('status', ['assigned', 'in_progress'])
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as ActiveJobRow[];
+}
+
+export type JobStatusUpdate = 'assigned' | 'in_progress' | 'completed';
+
+export async function updateJobStatus(
+  jobId: string,
+  status: JobStatusUpdate,
+  detailerId: string
+): Promise<void> {
+  const updates: Record<string, unknown> = { status };
+
+  if (status === 'in_progress') {
+    updates.detailer_arrived_at = new Date().toISOString();
+  }
+
+  if (status === 'completed') {
+    updates.detailer_completed_at = new Date().toISOString();
+    updates.completed_at = new Date().toISOString();
+  }
+
+  const { error } = await supabase
+    .from('detailer_bookings')
+    .update(updates)
+    .eq('id', jobId)
+    .eq('detailer_id', detailerId);
+
+  if (error) throw error;
+}
+
+export async function getJobDetails(jobId: string): Promise<ActiveJobRow | null> {
+  const { data, error } = await supabase
+    .from('detailer_bookings')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as ActiveJobRow | null;
 }

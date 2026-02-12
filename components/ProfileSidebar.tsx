@@ -6,7 +6,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { listBookingsByUser } from '../services/bookings';
 import { loadSavedVehicle, saveSavedVehicle, clearSavedVehicle } from '../utils/savedVehicle';
 import { VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS } from '../constants';
-import { submitDetailerApplication } from '../services/detailerApplications';
 import { TERMS_SECTIONS, PRIVACY_SECTIONS } from '../content/legal';
 import {
   listPaymentMethods,
@@ -34,7 +33,7 @@ interface ProfileSidebarProps {
   onLogout?: () => void | Promise<void>;
 }
 
-type SidebarView = 'menu' | 'history' | 'detail' | 'support' | 'payment' | 'settings' | 'vehicle' | 'joinBrnno' | 'terms' | 'privacy';
+type SidebarView = 'menu' | 'history' | 'detail' | 'support' | 'payment' | 'settings' | 'vehicle' | 'terms' | 'privacy';
 
 function brandDisplay(brand: string): string {
   return brand.charAt(0).toUpperCase() + brand.slice(1).toLowerCase();
@@ -140,7 +139,7 @@ function AddCardForm({
 }
 
 const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, onLogout }) => {
-  const { user: authUser } = useAuth();
+  const { user: authUser, signIn, signUp } = useAuth();
   const [currentView, setCurrentView] = useState<SidebarView>('menu');
   const [selectedBooking, setSelectedBooking] = useState<PastBooking | null>(null);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
@@ -158,35 +157,20 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [locationEnabled, setLocationEnabled] = useState(true);
 
-  // Join BRNNO (detailer application) state
-  const [joinForm, setJoinForm] = useState({
-    fullName: '',
-    email: '',
-    phone: '',
-    businessName: '',
-    ein: '',
-    businessType: 'Sole Proprietorship',
-    dba: '',
-    businessStreet: '',
-    businessCity: '',
-    businessState: '',
-    businessZip: '',
-    vehicleYear: String(new Date().getFullYear()),
-    vehicleMake: '',
-    vehicleModel: '',
-    vehicleColor: '',
-    serviceArea: '',
-    message: '',
-  });
-  const [joinSubmitted, setJoinSubmitted] = useState(false);
-  const [joinError, setJoinError] = useState<string | null>(null);
-  const [joinSubmitting, setJoinSubmitting] = useState(false);
-
   // My vehicle view state
   const [savedVehicleInView, setSavedVehicleInView] = useState<VehicleInfo | null>(null);
   const [vehicleForm, setVehicleForm] = useState({ year: String(new Date().getFullYear()), make: '', model: '', color: '' });
   const [vehicleShowForm, setVehicleShowForm] = useState(true);
   const [vehicleSaveMessage, setVehicleSaveMessage] = useState<string | null>(null);
+
+  // Auth form state (when not logged in)
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authFullName, setAuthFullName] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   // Reset view when sidebar closes
   useEffect(() => {
@@ -196,22 +180,11 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
         setSelectedBooking(null);
         setExpandedFaq(null);
         setIsAddingCard(false);
-        setJoinSubmitted(false);
-        setJoinError(null);
+        setAuthError(null);
+        setAuthMessage(null);
       }, 300);
     }
   }, [isOpen]);
-
-  // Prefill Join BRNNO form from auth user
-  useEffect(() => {
-    if (authUser && currentView === 'joinBrnno' && !joinSubmitted) {
-      setJoinForm(prev => ({
-        ...prev,
-        email: authUser.email ?? prev.email,
-        fullName: (authUser.user_metadata?.full_name as string) ?? prev.fullName,
-      }));
-    }
-  }, [authUser, currentView, joinSubmitted]);
 
   // Load payment methods when Wallet view is opened
   useEffect(() => {
@@ -304,7 +277,129 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
     </button>
   );
 
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthMessage(null);
+    setAuthSubmitting(true);
+    if (authMode === 'login') {
+      const { error: err } = await signIn(authEmail, authPassword);
+      if (err) {
+        setAuthError(err.message ?? 'Sign in failed');
+      }
+    } else {
+      const { error: err } = await signUp(authEmail, authPassword, authFullName || undefined);
+      if (err) {
+        const status = (err as { status?: number }).status;
+        const isAlreadyRegistered =
+          status === 422 || /already|registered|exists/i.test(err.message ?? '');
+        if (isAlreadyRegistered) {
+          const { error: signInErr } = await signIn(authEmail, authPassword);
+          if (signInErr) {
+            const msg = signInErr.message ?? '';
+            if (/invalid|credentials|password/i.test(msg)) {
+              setAuthError('That email is already registered. Sign in with your password. (Wrong password?)');
+            } else if (/confirm|verification/i.test(msg)) {
+              setAuthError('Please check your email and click the confirmation link, then sign in.');
+            } else {
+              setAuthError(msg || 'That email is already registered. Sign in with your password.');
+            }
+          } else {
+            setAuthMessage('Signed you in.');
+          }
+        } else {
+          setAuthError(err.message ?? 'Sign up failed');
+        }
+      } else {
+        setAuthMessage('Account created! You can sign in now.');
+      }
+    }
+    setAuthSubmitting(false);
+  };
+
   const renderContent = () => {
+    if (!authUser) {
+      return (
+        <div className="h-full flex flex-col animate-in fade-in duration-300">
+          <h1 className="text-3xl font-black tracking-tighter text-center mb-2">BRNNO NOW</h1>
+          <p className="text-gray-500 text-sm font-medium text-center mb-6">
+            {authMode === 'login' ? 'Sign in to save bookings and payment methods' : 'Create an account'}
+          </p>
+          <form onSubmit={handleAuthSubmit} className="space-y-4 flex-grow flex flex-col">
+            {authMode === 'signup' && (
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={authFullName}
+                  onChange={(e) => setAuthFullName(e.target.value)}
+                  placeholder="Your name"
+                  className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                  autoComplete="name"
+                />
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Email</label>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+                className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                autoComplete="email"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Password</label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={6}
+                className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
+                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+              />
+            </div>
+            {authError && (
+              <div className="bg-red-50 border border-red-100 text-red-600 text-sm font-medium rounded-2xl px-4 py-2">
+                {authError}
+              </div>
+            )}
+            {authMessage && (
+              <div className="bg-green-50 border border-green-100 text-green-700 text-sm font-medium rounded-2xl px-4 py-2">
+                {authMessage}
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={authSubmitting}
+              className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed mt-auto"
+            >
+              {authSubmitting ? 'Please wait…' : authMode === 'login' ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode(authMode === 'login' ? 'signup' : 'login');
+              setAuthError(null);
+              setAuthMessage(null);
+            }}
+            className="w-full mt-4 text-gray-500 text-sm font-bold hover:text-black transition-colors"
+          >
+            {authMode === 'login' ? 'Create an account' : 'Already have an account? Sign in'}
+          </button>
+          <p className="text-center text-[10px] text-gray-400 font-medium uppercase tracking-widest mt-6">
+            Or continue as guest to book without an account
+          </p>
+        </div>
+      );
+    }
+
     switch (currentView) {
       case 'payment':
         return (
@@ -752,346 +847,6 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
           </div>
         );
 
-      case 'joinBrnno':
-        const handleJoinSubmit = async (e: React.FormEvent) => {
-          e.preventDefault();
-          setJoinError(null);
-          const { fullName, email, phone, businessName, ein, businessType } = joinForm;
-          if (!fullName.trim()) {
-            setJoinError('Please enter your name.');
-            return;
-          }
-          if (!email.trim()) {
-            setJoinError('Please enter your email.');
-            return;
-          }
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-            setJoinError('Please enter a valid email address.');
-            return;
-          }
-          if (!phone.trim()) {
-            setJoinError('Please enter your phone number.');
-            return;
-          }
-          if (!businessName.trim()) {
-            setJoinError('Please enter your business name.');
-            return;
-          }
-          const einDigits = (ein || '').replace(/\D/g, '');
-          if (einDigits.length !== 9) {
-            setJoinError('Please enter a valid EIN (9 digits). You may use format 12-3456789.');
-            return;
-          }
-          if (!businessType.trim()) {
-            setJoinError('Please select a business type.');
-            return;
-          }
-          setJoinSubmitting(true);
-          const { error } = await submitDetailerApplication({
-            full_name: fullName.trim(),
-            email: email.trim(),
-            phone: phone.trim(),
-            business_name: businessName.trim(),
-            ein: ein.trim(),
-            business_type: businessType.trim(),
-            dba: joinForm.dba?.trim() || undefined,
-            business_street: joinForm.businessStreet?.trim() || undefined,
-            business_city: joinForm.businessCity?.trim() || undefined,
-            business_state: joinForm.businessState?.trim() || undefined,
-            business_zip: joinForm.businessZip?.trim() || undefined,
-            vehicle_type: [joinForm.vehicleYear?.trim(), joinForm.vehicleMake?.trim(), joinForm.vehicleModel?.trim(), joinForm.vehicleColor?.trim()]
-              .filter(Boolean)
-              .join(' ') || undefined,
-            service_area: joinForm.serviceArea?.trim() || undefined,
-            message: joinForm.message?.trim() || undefined,
-            user_id: authUser?.id ?? null,
-          });
-          setJoinSubmitting(false);
-          if (error) {
-            setJoinError(error.message ?? 'Something went wrong. Please try again.');
-            return;
-          }
-          setJoinSubmitted(true);
-        };
-
-        if (joinSubmitted) {
-          return (
-            <div className="animate-in fade-in slide-in-from-right-8 duration-500 ease-out h-full flex flex-col">
-              <BackButton onClick={() => { setJoinSubmitted(false); setCurrentView('menu'); }} label="Menu" />
-              <div className="flex-grow flex flex-col items-center justify-center text-center py-12 px-4">
-                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                </div>
-                <h2 className="text-2xl font-black mb-2">Application received</h2>
-                <p className="text-gray-600 font-medium mb-4">
-                  Thanks for applying to join BRNNO as a detailer.
-                </p>
-                <p className="text-gray-500 text-sm font-medium mb-8 max-w-sm">
-                  We&apos;ll review your application and email you when you&apos;re approved. You&apos;ll then sign in at the detailer portal to go online and accept jobs.
-                </p>
-                <button
-                  onClick={() => { setJoinSubmitted(false); setCurrentView('menu'); }}
-                  className="bg-black text-white py-4 px-8 rounded-2xl font-bold text-sm active:scale-95 transition-transform"
-                >
-                  Back to Menu
-                </button>
-              </div>
-            </div>
-          );
-        }
-
-        const businessTypes = ['Sole Proprietorship', 'LLC', 'Corporation', 'Partnership', 'Other'];
-
-        return (
-          <div className="animate-in fade-in slide-in-from-right-8 duration-500 ease-out h-full flex flex-col">
-            <BackButton onClick={() => setCurrentView('menu')} label="Menu" />
-            <h2 className="text-4xl font-black mb-2 tracking-tighter">Join BRNNO</h2>
-            <p className="text-gray-500 text-sm font-medium mb-6">Become a detailing pro.</p>
-            <form onSubmit={handleJoinSubmit} className="flex-grow overflow-y-auto no-scrollbar space-y-6 pb-8">
-              {/* Contact */}
-              <section>
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-2">Contact</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Full name *</label>
-                    <input
-                      type="text"
-                      value={joinForm.fullName}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, fullName: e.target.value }))}
-                      placeholder="Your name"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      autoComplete="name"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Email *</label>
-                    <input
-                      type="email"
-                      value={joinForm.email}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, email: e.target.value }))}
-                      placeholder="you@example.com"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      autoComplete="email"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Phone *</label>
-                    <input
-                      type="tel"
-                      value={joinForm.phone}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, phone: e.target.value }))}
-                      placeholder="(555) 000-0000"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      autoComplete="tel"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Business */}
-              <section>
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-2">Business</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Business name *</label>
-                    <input
-                      type="text"
-                      value={joinForm.businessName}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, businessName: e.target.value }))}
-                      placeholder="Legal business name"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">EIN *</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={joinForm.ein}
-                      onChange={(e) => {
-                        let val = e.target.value.replace(/\D/g, '');
-                        if (val.length > 2) val = val.slice(0, 2) + '-' + val.slice(2, 9);
-                        setJoinForm(prev => ({ ...prev, ein: val }));
-                      }}
-                      placeholder="12-3456789"
-                      maxLength={10}
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                    {joinError && /EIN|9 digits/i.test(joinError) && (
-                      <p className="text-red-600 text-xs font-medium mt-1 ml-2">{joinError}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Business type *</label>
-                    <select
-                      value={joinForm.businessType}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, businessType: e.target.value }))}
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black appearance-none cursor-pointer"
-                      style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239ca3af'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '20px', paddingRight: '40px' }}
-                    >
-                      {businessTypes.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">DBA (optional)</label>
-                    <input
-                      type="text"
-                      value={joinForm.dba}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, dba: e.target.value }))}
-                      placeholder="Doing Business As / trade name"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Business address (optional) */}
-              <section>
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-2">Business address (optional)</h4>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Street</label>
-                    <input
-                      type="text"
-                      value={joinForm.businessStreet}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, businessStreet: e.target.value }))}
-                      placeholder="Street address"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">City</label>
-                      <input
-                        type="text"
-                        value={joinForm.businessCity}
-                        onChange={(e) => setJoinForm(prev => ({ ...prev, businessCity: e.target.value }))}
-                        placeholder="City"
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">State</label>
-                      <input
-                        type="text"
-                        value={joinForm.businessState}
-                        onChange={(e) => setJoinForm(prev => ({ ...prev, businessState: e.target.value }))}
-                        placeholder="State"
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Zip</label>
-                    <input
-                      type="text"
-                      value={joinForm.businessZip}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, businessZip: e.target.value }))}
-                      placeholder="ZIP code"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {/* Operations */}
-              <section>
-                <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-2">Vehicle / rig</h4>
-                <div className="space-y-4">
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Year</label>
-                      <select
-                        value={joinForm.vehicleYear}
-                        onChange={(e) => setJoinForm((prev) => ({ ...prev, vehicleYear: e.target.value }))}
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      >
-                        <option value="">Year</option>
-                        {VEHICLE_YEARS.map((y) => (
-                          <option key={y} value={y}>{y}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Make</label>
-                      <select
-                        value={joinForm.vehicleMake}
-                        onChange={(e) => setJoinForm((prev) => ({ ...prev, vehicleMake: e.target.value }))}
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      >
-                        <option value="">Make</option>
-                        {VEHICLE_MAKES.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Model</label>
-                      <input
-                        type="text"
-                        value={joinForm.vehicleModel}
-                        onChange={(e) => setJoinForm((prev) => ({ ...prev, vehicleModel: e.target.value }))}
-                        placeholder="e.g. Transit, Sprinter, Camry"
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Color</label>
-                      <select
-                        value={joinForm.vehicleColor}
-                        onChange={(e) => setJoinForm((prev) => ({ ...prev, vehicleColor: e.target.value }))}
-                        className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                      >
-                        <option value="">—</option>
-                        {VEHICLE_COLORS.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Service area</label>
-                    <input
-                      type="text"
-                      value={joinForm.serviceArea}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, serviceArea: e.target.value }))}
-                      placeholder="City, state or zip"
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-2 mb-1">Why do you want to join?</label>
-                    <textarea
-                      value={joinForm.message}
-                      onChange={(e) => setJoinForm(prev => ({ ...prev, message: e.target.value }))}
-                      placeholder="Optional"
-                      rows={3}
-                      className="w-full bg-white border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-medium focus:outline-none focus:border-black resize-none"
-                    />
-                  </div>
-                </div>
-              </section>
-
-              {joinError && !/EIN|9 digits/i.test(joinError) && (
-                <div className="bg-red-50 border border-red-100 text-red-600 text-sm font-medium rounded-2xl px-4 py-2">
-                  {joinError}
-                </div>
-              )}
-              <button
-                type="submit"
-                disabled={joinSubmitting}
-                className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {joinSubmitting ? 'Submitting…' : 'Submit application'}
-              </button>
-            </form>
-          </div>
-        );
-
       case 'vehicle':
         return (
           <div className="animate-in fade-in slide-in-from-right-8 duration-500 ease-out h-full flex flex-col">
@@ -1298,16 +1053,7 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
             </nav>
 
             <div className="pt-10 border-t border-gray-100 mt-auto px-2 pb-2">
-              <button
-                onClick={() => setCurrentView('joinBrnno')}
-                className="w-full py-6 bg-black text-white rounded-[32px] font-black text-sm active:scale-95 transition-all shadow-[0_20px_40px_rgba(0,0,0,0.15)] hover:bg-gray-900 group"
-              >
-                <span className="flex items-center justify-center gap-3">
-                   JOIN BRNNO
-                   <span className="group-hover:translate-x-1 transition-transform">→</span>
-                </span>
-              </button>
-              <p className="text-center text-[9px] text-gray-300 mt-8 uppercase tracking-[0.4em] font-black opacity-50">V1.0.5 • BRNNO PLATFORM</p>
+              <p className="text-center text-[9px] text-gray-300 uppercase tracking-[0.4em] font-black opacity-50">V1.0.5 • BRNNO PLATFORM</p>
             </div>
           </div>
         );
