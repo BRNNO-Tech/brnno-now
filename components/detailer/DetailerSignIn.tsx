@@ -131,7 +131,13 @@ const DetailerSignIn: React.FC = () => {
             </button>
           </form>
         </div>
-        <p className="text-center text-[10px] text-gray-400 font-medium uppercase tracking-widest">
+        <p className="text-center text-sm text-gray-500 mt-4">
+          Not yet a detailer?{' '}
+          <a href="/detailer/signup" className="text-black font-semibold hover:underline">
+            Apply to join
+          </a>
+        </p>
+        <p className="text-center text-[10px] text-gray-400 font-medium uppercase tracking-widest mt-2">
           BRNNO Platform • Detailer
         </p>
       </div>

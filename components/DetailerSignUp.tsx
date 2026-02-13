@@ -54,6 +54,7 @@ export function DetailerSignUp() {
 
     setSubmitting(false);
     if (submitError) {
+      console.error('[DetailerSignUp] Submit failed:', submitError);
       setError(submitError.message || 'Failed to submit application');
       return;
     }

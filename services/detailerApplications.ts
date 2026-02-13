@@ -39,6 +39,7 @@ export async function submitDetailerApplication(
     user_id: input.user_id || null,
   });
   if (error) {
+    console.error('[detailerApplications] Supabase insert error:', error);
     return { error: new Error(error.message || 'Failed to submit application') };
   }
   return { error: null };
