@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ChangeEvent, type FormEvent } from 'react';
 import { submitDetailerApplication } from '../services/detailerApplications';
 
 export function DetailerSignUp() {
@@ -23,14 +23,14 @@ export function DetailerSignUp() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
@@ -107,8 +107,8 @@ export function DetailerSignUp() {
             <p className="text-gray-600 text-sm">Set your own schedule and service area</p>
           </div>
           <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <div className="text-3xl font-black text-black mb-2">Fair Pay</div>
-            <p className="text-gray-600 text-sm">Keep 80% of every job you complete</p>
+            <div className="text-3xl font-black text-black mb-2">Per Job Pay</div>
+            <p className="text-gray-600 text-sm">Accept job, get paid per job</p>
           </div>
           <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
             <div className="text-3xl font-black text-black mb-2">No Hassle</div>
