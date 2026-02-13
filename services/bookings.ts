@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase';
 import type { PastBooking } from '../types';
 
-export type BookingDbStatus = 'pending' | 'assigned' | 'en_route' | 'in_progress' | 'completed' | 'cancelled';
+export type BookingDbStatus = 'pending' | 'assigned' | 'en_route' | 'in_progress' | 'completed' | 'cancelled' | 'pending_approval';
 
 export interface BookingRow {
   id: string;
@@ -24,6 +24,8 @@ export interface BookingRow {
   guest_email?: string | null;
   guest_phone?: string | null;
   converted_user_id?: string | null;
+  adjusted_price?: number | null;
+  adjustment_reason?: string | null;
 }
 
 function formatBookingDate(completedAt: string | null, createdAt: string): string {

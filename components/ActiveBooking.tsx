@@ -1,24 +1,19 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { getServicePrice } from '../constants';
 import { BookingStatus, Detailer, Service, VehicleInfo, vehicleDisplayString } from '../types';
+import BookingChat from './BookingChat';
 
 interface ActiveBookingProps {
   status: BookingStatus;
   detailer: Detailer;
   service: Service;
   vehicleInfo?: VehicleInfo | null;
+  bookingId?: string | null;
   onCancel: () => void;
   onComplete?: () => void;
 }
 
-interface Message {
-  id: string;
-  sender: 'user' | 'detailer';
-  text: string;
-  time: string;
-}
-
-const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service, vehicleInfo, onCancel, onComplete }) => {
+const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service, vehicleInfo, bookingId, onCancel, onComplete }) => {
   const displayPrice = getServicePrice(service.id, vehicleInfo?.size ?? 'sedan');
   const [eta, setEta] = useState(8);
   const [highlight, setHighlight] = useState(false);
@@ -26,19 +21,8 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
   const [showArrivedBanner, setShowArrivedBanner] = useState(false);
   const [minimized, setMinimized] = useState(false);
   
-  // Chat state
   const [showChat, setShowChat] = useState(false);
   const [showManageBooking, setShowManageBooking] = useState(false);
-  const [chatMessage, setChatMessage] = useState('');
-  const [messages, setMessages] = useState<Message[]>([
-    { 
-      id: '1', 
-      sender: 'detailer', 
-      text: `Hi, I'm ${detailer.name}! I'm en route to your location.`, 
-      time: 'Just now' 
-    }
-  ]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -60,39 +44,6 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
 
     return () => clearTimeout(timeout);
   }, [status]);
-
-  // Scroll to bottom of chat
-  useEffect(() => {
-    if (showChat) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, showChat]);
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      sender: 'user',
-      text: chatMessage,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setMessages(prev => [...prev, newMessage]);
-    setChatMessage('');
-
-    // Simulate detailer reply
-    setTimeout(() => {
-      const reply: Message = {
-        id: (Date.now() + 1).toString(),
-        sender: 'detailer',
-        text: "Got it! Thanks for the update.",
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, reply]);
-    }, 2500);
-  };
 
   const getStatusText = () => {
     switch (status) {
@@ -219,12 +170,14 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
                 </div>
                 <p className="text-xs text-gray-400 font-medium">Top Rated Professional</p>
                 <div className="flex gap-2 mt-2">
-                  <button 
-                    onClick={() => setShowChat(true)}
-                    className="flex-grow bg-white border border-gray-200 py-2 rounded-xl text-xs font-black uppercase tracking-tight hover:bg-black hover:text-white hover:border-black active:scale-95 transition-all"
-                  >
-                    Message
-                  </button>
+                  {bookingId && (
+                    <button 
+                      onClick={() => setShowChat(true)}
+                      className="flex-grow bg-white border border-gray-200 py-2 rounded-xl text-xs font-black uppercase tracking-tight hover:bg-black hover:text-white hover:border-black active:scale-95 transition-all"
+                    >
+                      Message
+                    </button>
+                  )}
                   <button className="flex-grow bg-white border border-gray-200 py-2 rounded-xl text-xs font-black uppercase tracking-tight hover:bg-green-600 hover:text-white hover:border-green-600 active:scale-95 transition-all">
                     Call
                   </button>
@@ -281,76 +234,32 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
         )}
       </div>
 
-      {/* Chat Interface Modal */}
-      {showChat && (
+      {/* Chat Modal */}
+      {showChat && bookingId && (
         <div className="fixed inset-0 z-[100] flex flex-col bg-white animate-in slide-in-from-bottom duration-300">
-          {/* Header */}
           <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white/80 backdrop-blur-md sticky top-0 z-10 shadow-sm">
             <div className="flex items-center gap-4">
               <div className="relative">
                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-white shadow-lg">
                   <img src={detailer.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(detailer.name || '')}&background=e5e7eb&color=374151`} alt={detailer.name} className="w-full h-full object-cover" />
                 </div>
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
               </div>
               <div>
                 <h3 className="font-black text-xl leading-tight tracking-tight">{detailer.name}</h3>
-                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Detailing Pro • {detailer.rating} ★</p>
+                <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Message Your Detailer</p>
               </div>
             </div>
-            <button 
+            <button
               onClick={() => setShowChat(false)}
               className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center hover:bg-black hover:text-white active:scale-90 transition-all"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
-
-          {/* Messages Area */}
-          <div className="flex-grow overflow-y-auto p-4 space-y-6 bg-gray-50/50">
-            <div className="text-center py-4">
-               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Today</p>
-            </div>
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`flex flex-col max-w-[80%] ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                  <div className={`px-5 py-3 rounded-2xl text-sm font-bold shadow-sm ${
-                    msg.sender === 'user' 
-                      ? 'bg-black text-white rounded-br-none' 
-                      : 'bg-white text-gray-800 rounded-bl-none border border-gray-100'
-                  }`}>
-                    {msg.text}
-                  </div>
-                  <span className="text-[9px] text-gray-400 font-bold mt-1.5 px-1">{msg.time}</span>
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
+          <div className="flex-grow flex flex-col min-h-0 overflow-hidden p-4">
+            <BookingChat bookingId={bookingId} currentUserType="customer" otherPartyName={detailer.name} />
           </div>
-
-          {/* Input Area */}
-          <form onSubmit={handleSendMessage} className="p-4 bg-white border-t border-gray-100 pb-8 safe-area-pb">
-            <div className="flex items-center gap-3">
-              <button type="button" className="p-3 bg-gray-100 rounded-2xl text-gray-400 hover:bg-gray-200 transition-colors">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-              </button>
-              <div className="flex-grow relative">
-                <input 
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  placeholder="Type a message..."
-                  className="w-full bg-gray-50 border-2 border-transparent focus:bg-white focus:border-black rounded-2xl pl-4 pr-4 py-3.5 text-sm font-bold transition-all outline-none"
-                />
-              </div>
-              <button 
-                type="submit"
-                disabled={!chatMessage.trim()}
-                className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200 active:scale-95 disabled:opacity-50 disabled:scale-100 disabled:shadow-none transition-all"
-              >
-                <svg className="w-5 h-5 rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
-              </button>
-            </div>
-          </form>
         </div>
       )}
 
@@ -433,16 +342,18 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
                   Service complete
                 </button>
               )}
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowManageBooking(false);
-                  setShowChat(true);
-                }}
-                className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform shadow-lg"
-              >
-                Message Professional
-              </button>
+              {bookingId && (
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowManageBooking(false);
+                    setShowChat(true);
+                  }}
+                  className="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform shadow-lg"
+                >
+                  Message Professional
+                </button>
+              )}
               <button 
                 onClick={(e) => {
                   e.stopPropagation();

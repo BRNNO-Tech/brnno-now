@@ -7,9 +7,17 @@ import { BookingStatus, Service, Detailer, VehicleInfo, vehicleDisplayString } f
 import { UserProfile } from '../types';
 import { getServicePrice } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
-import { listPaymentMethods, capturePayment, cancelPayment, type PaymentMethodDisplay } from '../services/paymentMethods';
+import {
+  listPaymentMethods,
+  capturePayment,
+  cancelPayment,
+  updatePaymentAmount,
+  chargeCancellationFee,
+  type PaymentMethodDisplay,
+} from '../services/paymentMethods';
 import { supabase } from '../lib/supabase';
 import { createBooking, updateBookingStatus, getBookingById, cancelBooking } from '../services/bookings';
+import { sendMessage } from '../services/bookingChat';
 import { getDetailerLocation } from '../services/detailerLocation';
 
 const POLL_INTERVAL_MS = 2500;
@@ -46,6 +54,7 @@ const CustomerApp: React.FC = () => {
   const [createAccountPassword, setCreateAccountPassword] = useState('');
   const [createAccountError, setCreateAccountError] = useState<string | null>(null);
   const [createAccountSubmitting, setCreateAccountSubmitting] = useState(false);
+  const [pendingApprovalBooking, setPendingApprovalBooking] = useState<Awaited<ReturnType<typeof getBookingById>> | null>(null);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
@@ -184,6 +193,38 @@ const CustomerApp: React.FC = () => {
     return () => clearInterval(interval);
   }, [status, assignedDetailer?.id]);
 
+  // Poll for in_progress or pending_approval so customer sees chat/status when detailer has arrived or price adjustment requested
+  useEffect(() => {
+    if ((status !== BookingStatus.EN_ROUTE && status !== BookingStatus.IN_PROGRESS) || !currentBookingId) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const row = await getBookingById(currentBookingId);
+        if (!row) return;
+        if (row.status === 'pending_approval') {
+          setPendingApprovalBooking(row);
+          setStatus(BookingStatus.PENDING_APPROVAL);
+        } else if (row.status === 'in_progress') {
+          setStatus(BookingStatus.IN_PROGRESS);
+        } else if (row.status === 'cancelled') {
+          setStatus(BookingStatus.IDLE);
+          setCurrentBookingId(null);
+          setAssignedDetailer(null);
+          setSelectedService(null);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [status, currentBookingId]);
+
   const handleConfirmBooking = (
     service: Service,
     schedule?: string,
@@ -241,7 +282,6 @@ const CustomerApp: React.FC = () => {
     setAssignedDetailer(null);
     setScheduledTime(null);
     setVehicleInfo(null);
-    setSearchStep(0);
   };
 
   const handleComplete = async () => {
@@ -264,6 +304,64 @@ const CustomerApp: React.FC = () => {
     setAssignedDetailer(null);
     setScheduledTime(null);
     setVehicleInfo(null);
+  };
+
+  const handleApproveAdjustment = async () => {
+    if (!pendingApprovalBooking || !currentBookingId) return;
+    const { payment_intent_id, adjusted_price, id } = pendingApprovalBooking;
+    if (!payment_intent_id || adjusted_price == null) return;
+    try {
+      await updatePaymentAmount(payment_intent_id, adjusted_price);
+      const { error } = await supabase
+        .from('detailer_bookings')
+        .update({
+          customer_approved_adjustment: true,
+          cost: adjusted_price / 100,
+          status: 'en_route',
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser) {
+        await sendMessage(id, 'customer', 'Price adjustment approved. Please proceed with the service.');
+      }
+
+      setPendingApprovalBooking(null);
+      setStatus(BookingStatus.EN_ROUTE);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to approve adjustment');
+    }
+  };
+
+  const handleDeclineAdjustment = async () => {
+    if (!pendingApprovalBooking || !currentBookingId) return;
+    const { payment_intent_id, id } = pendingApprovalBooking;
+    if (!payment_intent_id) return;
+    if (!confirm('Are you sure? A $25 cancellation fee will be charged.')) return;
+    try {
+      await chargeCancellationFee(payment_intent_id);
+      const { error } = await supabase
+        .from('detailer_bookings')
+        .update({
+          customer_approved_adjustment: false,
+          cancellation_fee_charged: true,
+          status: 'cancelled',
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setPendingApprovalBooking(null);
+      setCurrentBookingId(null);
+      setAssignedDetailer(null);
+      setSelectedService(null);
+      setStatus(BookingStatus.IDLE);
+      alert('Booking cancelled. $25 cancellation fee has been charged.');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to process cancellation fee');
+    }
   };
 
   const handleCreateAccountSubmit = async (e: React.FormEvent) => {
@@ -533,12 +631,52 @@ const CustomerApp: React.FC = () => {
         </div>
       )}
 
-      {(status === BookingStatus.EN_ROUTE || status === BookingStatus.ARRIVED) && assignedDetailer && selectedService && (
+      {status === BookingStatus.PENDING_APPROVAL && pendingApprovalBooking && (
+        <div className="absolute bottom-0 left-0 right-0 p-4 z-50">
+          <div className="max-w-md mx-auto bg-yellow-50 border-2 border-yellow-400 rounded-2xl p-6 shadow-xl">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="text-3xl">⚠️</div>
+              <div>
+                <h3 className="font-bold text-yellow-900 text-lg mb-2">Price Adjustment Request</h3>
+                <p className="text-yellow-800 mb-2">
+                  Your detailer has requested to change the price from{' '}
+                  <span className="font-semibold">${Number(pendingApprovalBooking.cost).toFixed(2)}</span> to{' '}
+                  <span className="font-semibold">${((pendingApprovalBooking.adjusted_price ?? 0) / 100).toFixed(2)}</span>
+                </p>
+                <div className="bg-white rounded p-3 mb-4">
+                  <p className="text-sm font-medium text-gray-700 mb-1">Reason:</p>
+                  <p className="text-sm text-gray-600">{pendingApprovalBooking.adjustment_reason ?? '—'}</p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleApproveAdjustment}
+                className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold"
+              >
+                Approve New Price
+              </button>
+              <button
+                onClick={handleDeclineAdjustment}
+                className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold"
+              >
+                Decline & Cancel
+              </button>
+            </div>
+            <p className="text-xs text-gray-600 mt-3 text-center">
+              If you decline, a $25 cancellation fee will be charged for the detailer&apos;s travel time.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {(status === BookingStatus.EN_ROUTE || status === BookingStatus.ARRIVED || status === BookingStatus.IN_PROGRESS) && assignedDetailer && selectedService && (
         <ActiveBooking
           status={status}
           detailer={assignedDetailer}
           service={selectedService}
           vehicleInfo={vehicleInfo}
+          bookingId={currentBookingId}
           onCancel={handleCancel}
           onComplete={currentBookingId ? handleComplete : undefined}
         />

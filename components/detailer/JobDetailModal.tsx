@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
 import { updateJobStatus, type ActiveJobRow } from '../../services/detailers';
+import { supabase } from '../../lib/supabase';
+import { sendMessage } from '../../services/bookingChat';
+import { capturePaymentForJob } from '../../services/paymentMethods';
 import { ADD_ONS } from '../../constants';
+import BookingChat from '../BookingChat';
 
 function formatEarn(job: ActiveJobRow): string {
   const payout = job.detailer_payout;
@@ -19,6 +23,11 @@ interface JobDetailModalProps {
 export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPriceAdjustment, setShowPriceAdjustment] = useState(false);
+  const [adjustedPrice, setAdjustedPrice] = useState('');
+  const [adjustmentReason, setAdjustmentReason] = useState('');
+
+  const effectiveDetailerId = job.detailer_id ?? job.assigned_detailer_id ?? null;
 
   function handleOpenMaps() {
     const address = encodeURIComponent(job.location ?? '');
@@ -27,11 +36,11 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
   }
 
   async function handleMarkArrived() {
-    if (!job.detailer_id) return;
+    if (!effectiveDetailerId) return;
     setLoading(true);
     setError(null);
     try {
-      await updateJobStatus(job.id, 'in_progress', job.detailer_id);
+      await updateJobStatus(job.id, 'in_progress', effectiveDetailerId);
       onJobUpdated();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update. Try again.');
@@ -40,14 +49,47 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
     }
   }
 
+  async function handleDeclineJob() {
+    if (!effectiveDetailerId) return;
+    if (!confirm('Are you sure you want to decline this job? It will go back to pending and admin will reassign.')) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { error: updateError } = await supabase
+        .from('detailer_bookings')
+        .update({
+          assigned_detailer_id: null,
+          detailer_id: null,
+          detailer_name: null,
+          car_name: null,
+          status: 'pending',
+        })
+        .eq('id', job.id)
+        .or(`detailer_id.eq.${effectiveDetailerId},assigned_detailer_id.eq.${effectiveDetailerId}`);
+
+      if (updateError) throw updateError;
+
+      await sendMessage(job.id, 'detailer', 'Detailer declined this job. Admin will assign someone else.');
+
+      onJobUpdated();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to decline. Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCompleteJob() {
-    if (!job.detailer_id) return;
+    if (!effectiveDetailerId) return;
     if (!confirm('Mark this job as completed?')) return;
     setLoading(true);
     setError(null);
     try {
-      await updateJobStatus(job.id, 'completed', job.detailer_id);
+      await capturePaymentForJob(job.id);
+      await updateJobStatus(job.id, 'completed', effectiveDetailerId);
       onJobUpdated();
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save completion. Try again.');
     } finally {
@@ -55,8 +97,52 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
     }
   }
 
+  async function handleRequestPriceAdjustment() {
+    const newPrice = parseFloat(adjustedPrice);
+    if (!adjustedPrice.trim() || !adjustmentReason.trim()) {
+      setError('Please provide new price and reason');
+      return;
+    }
+    if (isNaN(newPrice) || newPrice <= 0) {
+      setError('Invalid price');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const { error: updateError } = await supabase
+        .from('detailer_bookings')
+        .update({
+          price_adjustment_requested: true,
+          adjusted_price: Math.round(newPrice * 100),
+          adjustment_reason: adjustmentReason.trim(),
+          status: 'pending_approval',
+        })
+        .eq('id', job.id);
+
+      if (updateError) throw updateError;
+
+      await sendMessage(
+        job.id,
+        'detailer',
+        `Price adjustment requested: $${adjustedPrice}. Reason: ${adjustmentReason.trim()}. Please approve to continue.`
+      );
+
+      setShowPriceAdjustment(false);
+      setAdjustedPrice('');
+      setAdjustmentReason('');
+      onJobUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to request price adjustment');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const isAssigned = job.status === 'assigned';
   const isInProgress = job.status === 'in_progress';
+  const canRequestPriceAdjustment =
+    (isAssigned || isInProgress) && job.status !== 'pending_approval';
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -163,6 +249,80 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
             </div>
           </div>
 
+          {canRequestPriceAdjustment && (
+            <div className="mt-4">
+              {!showPriceAdjustment ? (
+                <button
+                  type="button"
+                  onClick={() => setShowPriceAdjustment(true)}
+                  className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-medium"
+                >
+                  Request Price Adjustment
+                </button>
+              ) : (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Request Price Adjustment</h4>
+                  <label className="block text-sm font-medium mb-1">New Price</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={adjustedPrice}
+                    onChange={(e) => setAdjustedPrice(e.target.value)}
+                    placeholder="129.00"
+                    className="w-full px-3 py-2 border rounded-lg mb-3"
+                  />
+                  <label className="block text-sm font-medium mb-1">Reason</label>
+                  <textarea
+                    value={adjustmentReason}
+                    onChange={(e) => setAdjustmentReason(e.target.value)}
+                    placeholder="Car is much dirtier than expected - heavy pet hair, mud, etc."
+                    className="w-full px-3 py-2 border rounded-lg mb-3"
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRequestPriceAdjustment}
+                      disabled={loading}
+                      className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+                    >
+                      Send Request
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPriceAdjustment(false);
+                        setAdjustedPrice('');
+                        setAdjustmentReason('');
+                        setError(null);
+                      }}
+                      className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {job.status === 'pending_approval' && (
+            <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4">
+              <p className="text-sm font-medium text-yellow-800">
+                Price adjustment requested. Waiting for customer approval.
+              </p>
+            </div>
+          )}
+
+          <div>
+            <h4 className="font-semibold mb-2">Chat with Customer</h4>
+            <BookingChat
+              bookingId={job.id}
+              currentUserType="detailer"
+              otherPartyName={job.guest_name ?? 'Customer'}
+            />
+          </div>
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm font-medium rounded-2xl px-4 py-3">
               {error}
@@ -171,14 +331,24 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
 
           <div className="space-y-2 pt-4 border-t border-gray-200">
             {isAssigned && (
-              <button
-                type="button"
-                onClick={handleMarkArrived}
-                disabled={loading}
-                className="w-full bg-black text-white py-3 rounded-2xl font-black text-sm active:scale-[0.98] disabled:opacity-50"
-              >
-                {loading ? 'Updating…' : 'Mark arrived'}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleMarkArrived}
+                  disabled={loading}
+                  className="flex-1 bg-black text-white py-3 rounded-2xl font-black text-sm active:scale-[0.98] disabled:opacity-50"
+                >
+                  {loading ? 'Updating…' : 'Mark arrived'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeclineJob}
+                  disabled={loading}
+                  className="px-4 py-3 rounded-2xl font-bold text-sm border-2 border-red-300 bg-red-50 text-red-700 hover:bg-red-100 active:scale-[0.98] disabled:opacity-50"
+                >
+                  Decline
+                </button>
+              </div>
             )}
             {isInProgress && (
               <button

@@ -93,6 +93,7 @@ export default function AdminDashboard() {
     const { error } = await supabase
       .from('detailer_bookings')
       .update({
+        assigned_detailer_id: detailer.id,
         detailer_id: detailer.id,
         detailer_name: detailer.name,
         car_name: carName,

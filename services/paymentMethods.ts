@@ -215,3 +215,48 @@ export async function cancelPayment(paymentIntentId: string): Promise<{ id: stri
   if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Cancel failed');
   return data as { id: string; status: string };
 }
+
+export async function updatePaymentAmount(
+  paymentIntentId: string,
+  newAmountCents: number
+): Promise<{ success: boolean }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Please log in.');
+  }
+  const { data, error } = await supabase.functions.invoke('update-payment-amount', {
+    body: { paymentIntentId, newAmount: newAmountCents },
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Update failed');
+  return data as { success: boolean };
+}
+
+export async function chargeCancellationFee(paymentIntentId: string): Promise<{ success: boolean }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Please log in.');
+  }
+  const { data, error } = await supabase.functions.invoke('charge-cancellation-fee', {
+    body: { paymentIntentId },
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Charge failed');
+  return data as { success: boolean };
+}
+
+export async function capturePaymentForJob(bookingId: string): Promise<{ success: boolean; captured?: boolean }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Please log in.');
+  }
+  const { data, error } = await supabase.functions.invoke('capture-payment-for-job', {
+    body: { booking_id: bookingId },
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (error) throw error;
+  if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Capture failed');
+  return data as { success: boolean; captured?: boolean };
+}

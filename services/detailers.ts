@@ -130,6 +130,10 @@ export interface ActiveJobRow {
   guest_name?: string | null;
   guest_email?: string | null;
   guest_phone?: string | null;
+  assigned_detailer_id?: string | null;
+  payment_intent_id?: string | null;
+  adjusted_price?: number | null;
+  adjustment_reason?: string | null;
   [key: string]: unknown;
 }
 
@@ -137,8 +141,8 @@ export async function getActiveJobsForDetailer(detailerId: string): Promise<Acti
   const { data, error } = await supabase
     .from('detailer_bookings')
     .select('*')
-    .eq('detailer_id', detailerId)
-    .in('status', ['assigned', 'in_progress'])
+    .or(`assigned_detailer_id.eq.${detailerId},detailer_id.eq.${detailerId}`)
+    .in('status', ['assigned', 'en_route', 'in_progress', 'completed', 'pending_approval'])
     .order('created_at', { ascending: false });
 
   if (error) throw error;
@@ -167,7 +171,7 @@ export async function updateJobStatus(
     .from('detailer_bookings')
     .update(updates)
     .eq('id', jobId)
-    .eq('detailer_id', detailerId);
+    .or(`detailer_id.eq.${detailerId},assigned_detailer_id.eq.${detailerId}`);
 
   if (error) throw error;
 }
