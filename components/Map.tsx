@@ -721,21 +721,13 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
             <div className="text-xs text-gray-500 mb-4">
               {!import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_MAPS_API_KEY === 'YOUR_GOOGLE_MAPS_API_KEY_HERE' 
                 ? 'Please configure VITE_GOOGLE_MAPS_API_KEY in .env.local and restart the dev server'
-                : 'Initializing Google Maps...'}
+                : 'Initializing map...'}
             </div>
             {locationError && (
               <div className="text-[10px] text-orange-600 mb-2 bg-orange-50 px-3 py-2 rounded-lg">
                 {locationError}
               </div>
             )}
-            <div className="text-[10px] text-gray-400 font-mono">
-              API Key: {import.meta.env.VITE_GOOGLE_MAPS_API_KEY 
-                ? `${import.meta.env.VITE_GOOGLE_MAPS_API_KEY.substring(0, 15)}...` 
-                : 'NOT FOUND'}
-            </div>
-            <div className="text-[10px] text-gray-400 mt-2">
-              Check browser console for errors
-            </div>
           </div>
         </div>
       )}
