@@ -28,7 +28,7 @@ export interface Service {
   price: number;
   duration: string;
   description: string;
-  icon: string;
+  icon?: string;
 }
 
 export interface UserProfile {

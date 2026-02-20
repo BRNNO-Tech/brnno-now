@@ -632,7 +632,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
               {/* Service Summary */}
               <div className="bg-gray-50 rounded-2xl p-4 mb-4 border border-gray-100">
                 <div className="flex items-center gap-4 mb-3">
-                  <div className="text-3xl">{selectedService.icon}</div>
+                  {selectedService.icon && <div className="text-3xl">{selectedService.icon}</div>}
                   <div className="flex-grow">
                     <h4 className="font-bold text-lg">{selectedService.name}</h4>
                     <p className="text-xs text-gray-500">{selectedService.duration}</p>
@@ -1036,7 +1036,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                     : 'border-transparent bg-white hover:border-gray-200 shadow-sm'
                 }`}
               >
-                <div className="text-3xl">{service.icon}</div>
+                {service.icon && <div className="text-3xl">{service.icon}</div>}
                 <div className="flex-grow text-left">
                   <div className="flex justify-between items-center">
                     <span className="font-bold">{service.name}</span>
@@ -1235,7 +1235,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
             onClick={(e) => e.stopPropagation()}
           >
             <div className="relative h-40 bg-gray-900 flex items-center justify-center text-8xl">
-              {viewingDetailService.icon}
+              {viewingDetailService.icon && <span>{viewingDetailService.icon}</span>}
               <button 
                 onClick={() => setViewingDetailService(null)}
                 className="absolute top-6 right-6 w-10 h-10 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white transition-all active:scale-90"

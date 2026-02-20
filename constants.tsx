@@ -25,7 +25,6 @@ export const SERVICES: Service[] = [
     price: 175,
     duration: '2–3 hrs',
     description: 'Deep vacuum, steam clean, upholstery and surfaces.',
-    icon: '🪑'
   },
   {
     id: 'exterior-detail',
@@ -33,7 +32,6 @@ export const SERVICES: Service[] = [
     price: 125,
     duration: '1–1.5 hrs',
     description: 'Wash, wax, wheels and trim.',
-    icon: '✨'
   },
   {
     id: 'full-detail',
@@ -41,7 +39,6 @@ export const SERVICES: Service[] = [
     price: 250,
     duration: '3–4 hrs',
     description: 'Interior + exterior full detail.',
-    icon: '💎'
   },
 ];
 

@@ -15,7 +15,6 @@ interface ActiveBookingProps {
 
 const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service, vehicleInfo, bookingId, onCancel, onComplete }) => {
   const displayPrice = getServicePrice(service.id, vehicleInfo?.size ?? 'sedan');
-  const [eta, setEta] = useState(8);
   const [highlight, setHighlight] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showArrivedBanner, setShowArrivedBanner] = useState(false);
@@ -23,13 +22,6 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
   
   const [showChat, setShowChat] = useState(false);
   const [showManageBooking, setShowManageBooking] = useState(false);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setEta(prev => Math.max(1, prev - 1));
-    }, 60000);
-    return () => clearInterval(timer);
-  }, []);
 
   // Trigger arrival banner and highlights
   useEffect(() => {
@@ -47,7 +39,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
 
   const getStatusText = () => {
     switch (status) {
-      case BookingStatus.EN_ROUTE: return `Arriving in ${eta} mins`;
+      case BookingStatus.EN_ROUTE: return 'On the way';
       case BookingStatus.ARRIVED: return 'Your Pro has arrived!';
       case BookingStatus.IN_PROGRESS: return 'Detailing in progress...';
       default: return 'Preparing...';
@@ -291,7 +283,7 @@ const ActiveBooking: React.FC<ActiveBookingProps> = ({ status, detailer, service
               <div className="bg-gray-50 rounded-2xl p-5 border border-gray-100">
                 <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Service Details</h4>
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="text-3xl">{service.icon}</div>
+                  {service.icon && <div className="text-3xl">{service.icon}</div>}
                   <div className="flex-grow">
                     <p className="font-black text-lg">{service.name}</p>
                     <p className="text-xs text-gray-500 font-medium">{service.duration}</p>
