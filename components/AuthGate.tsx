@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getUserRoles, addRole } from '../lib/auth-helpers';
+import { supabase } from '../lib/supabase';
 
 const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate();
@@ -22,34 +23,50 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       setHasCustomerRole(null);
       return;
     }
+    let cancelled = false;
+
+    const checkRoles = async () => {
+      // Ensure session is attached so RLS sees auth.uid() (avoids race after sign-in)
+      await supabase.auth.getSession();
+      const roles = await getUserRoles(user.id);
+      if (cancelled) return;
+      if (roles.includes('customer')) {
+        setHasCustomerRole(true);
+        return;
+      }
+      if (roles.includes('detailer')) {
+        navigate('/detailer/dashboard', { replace: true });
+        return;
+      }
+      // No role yet: auto-add customer
+      try {
+        await addRole(user.id, 'customer');
+        if (!cancelled) setHasCustomerRole(true);
+      } catch {
+        if (!cancelled) setHasCustomerRole(false);
+      }
+    };
+
     if (grantCustomerRoleAfterSignInRef.current) {
       grantCustomerRoleAfterSignInRef.current = false;
       addRole(user.id, 'customer')
-        .then(() => setHasCustomerRole(true))
+        .then(() => {
+          if (!cancelled) setHasCustomerRole(true);
+        })
         .catch(() => {
-          getUserRoles(user.id).then((roles) => {
-            setHasCustomerRole(roles.includes('customer'));
-          }).catch(() => setHasCustomerRole(false));
+          checkRoles();
         });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
-    getUserRoles(user.id)
-      .then(async (roles) => {
-        if (roles.includes('customer')) {
-          setHasCustomerRole(true);
-        } else if (roles.includes('detailer')) {
-          navigate('/detailer/dashboard', { replace: true });
-        } else {
-          // No role yet: auto-add customer so returning sign-ins don't see the gate every time
-          try {
-            await addRole(user.id, 'customer');
-            setHasCustomerRole(true);
-          } catch {
-            setHasCustomerRole(false);
-          }
-        }
-      })
-      .catch(() => setHasCustomerRole(false));
+
+    checkRoles().catch(() => {
+      if (!cancelled) setHasCustomerRole(false);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [user?.id, navigate]);
 
   if (loading) {
