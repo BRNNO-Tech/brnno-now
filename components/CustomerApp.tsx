@@ -55,6 +55,8 @@ const CustomerApp: React.FC = () => {
   const [createAccountError, setCreateAccountError] = useState<string | null>(null);
   const [createAccountSubmitting, setCreateAccountSubmitting] = useState(false);
   const [pendingApprovalBooking, setPendingApprovalBooking] = useState<Awaited<ReturnType<typeof getBookingById>> | null>(null);
+  const [bookingAddress, setBookingAddress] = useState<string | null>(null);
+  const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
@@ -98,8 +100,8 @@ const CustomerApp: React.FC = () => {
             status: 'pending',
             detailerName: null,
             carName: null,
-            location: 'At your location',
-            addressZip: null,
+            location: bookingAddress ?? 'At your location',
+            addressZip: bookingAddressZip ?? null,
             payment_intent_id: currentPaymentIntentId ?? null,
             tax_cents: taxCents ?? null,
             subtotal_cents: subtotalCents ?? null,
@@ -172,7 +174,7 @@ const CustomerApp: React.FC = () => {
         pollIntervalRef.current = null;
       }
     };
-  }, [status, user, selectedService, vehicleInfo, chargedAmountCents, currentPaymentIntentId, taxCents, subtotalCents, bookingAddOnIds, bookingDirtinessLevel]);
+  }, [status, user, selectedService, vehicleInfo, chargedAmountCents, currentPaymentIntentId, taxCents, subtotalCents, bookingAddOnIds, bookingDirtinessLevel, bookingAddress, bookingAddressZip]);
 
   // Poll detailer location when en route so map shows real position
   useEffect(() => {
@@ -235,7 +237,9 @@ const CustomerApp: React.FC = () => {
     subtotalCentsParam?: number,
     addOnIds?: string[],
     dirtinessLevel?: string,
-    guestInfo?: { guestName: string; guestEmail: string; guestPhone: string } | null
+    guestInfo?: { guestName: string; guestEmail: string; guestPhone: string } | null,
+    address?: string | null,
+    addressZip?: string | null
   ) => {
     setSelectedService(service);
     setVehicleInfo(vehicle ?? null);
@@ -246,6 +250,8 @@ const CustomerApp: React.FC = () => {
     setBookingAddOnIds(addOnIds ?? []);
     setBookingDirtinessLevel(dirtinessLevel ?? null);
     setBookingGuestInfo(guestInfo ?? null);
+    setBookingAddress(address ?? null);
+    setBookingAddressZip(addressZip ?? null);
 
     if (schedule) {
       setScheduledTime(schedule);
@@ -282,6 +288,8 @@ const CustomerApp: React.FC = () => {
     setAssignedDetailer(null);
     setScheduledTime(null);
     setVehicleInfo(null);
+    setBookingAddress(null);
+    setBookingAddressZip(null);
   };
 
   const handleComplete = async () => {
@@ -304,6 +312,8 @@ const CustomerApp: React.FC = () => {
     setAssignedDetailer(null);
     setScheduledTime(null);
     setVehicleInfo(null);
+    setBookingAddress(null);
+    setBookingAddressZip(null);
   };
 
   const handleApproveAdjustment = async () => {
@@ -413,12 +423,6 @@ const CustomerApp: React.FC = () => {
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
           <span className="font-black text-sm tracking-tighter">BRNNO NOW</span>
         </div>
-
-        <button className="pointer-events-auto w-12 h-12 glass rounded-2xl shadow-lg flex items-center justify-center">
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </button>
       </div>
 
       <Map status={status} assignedDetailer={assignedDetailer} />
@@ -530,7 +534,9 @@ const CustomerApp: React.FC = () => {
               )}
               <div className="flex justify-between text-sm">
                 <span className="text-gray-500">Location</span>
-                <span className="font-semibold text-black">At your location</span>
+                <span className="font-semibold text-black text-right max-w-[60%] truncate">
+                  {bookingAddress ?? 'At your location'}
+                </span>
               </div>
             </div>
 

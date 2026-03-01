@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import type { StripeCardElement } from '@stripe/stripe-js';
 import { SERVICES, VEHICLE_SIZES, VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS, getServicePrice, ADD_ONS, DIRTINESS_LEVELS, getDirtinessUpcharge, type DirtinessLevel } from '../constants';
 import { Service, VehicleInfo, vehicleDisplayString, type VehicleSize } from '../types';
 import { inferVehicleSize, isSizeSmallerThan } from '../utils/vehicleSize';
@@ -9,6 +10,7 @@ import { createPaymentIntent, createPaymentIntentForGuest, getTaxPreview } from 
 import { fetchVehicleModels } from '../services/vehicleModels';
 import type { PaymentMethodDisplay } from '../services/paymentMethods';
 import { stripePromise } from '../lib/stripe';
+import AddressStep from './AddressStep';
 
 export interface GuestInfo {
   guestName: string;
@@ -27,7 +29,9 @@ interface BookingFlowProps {
     subtotalCents?: number,
     addOnIds?: string[],
     dirtinessLevel?: string,
-    guestInfo?: GuestInfo | null
+    guestInfo?: GuestInfo | null,
+    address?: string | null,
+    addressZip?: string | null
   ) => void;
   onClose?: () => void;
   paymentMethods?: PaymentMethodDisplay[];
@@ -100,7 +104,7 @@ function GuestCardPaymentForm({
       const clientSecret = result.client_secret;
       if (!clientSecret) throw new Error('No client_secret');
       const { error, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
-        payment_method: { card: cardEl },
+        payment_method: { card: cardEl as unknown as StripeCardElement },
       });
       if (error) {
         onError(error.message ?? 'Payment failed');
@@ -152,6 +156,9 @@ function GuestCardPaymentForm({
 }
 
 const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMethods = [], defaultPaymentMethod, user }) => {
+  const [showAddressStep, setShowAddressStep] = useState(true);
+  const [bookingAddress, setBookingAddress] = useState<string | null>(null);
+  const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
   const [selectedSize, setSelectedSize] = useState<VehicleSize>('sedan');
   const [selectedId, setSelectedId] = useState<string>(SERVICES[0].id);
   const [aiLoading, setAiLoading] = useState(false);
@@ -366,7 +373,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
         }
       }
       const scheduledAt = bookingMode === 'later' ? `${scheduledDate} ${scheduledTime}` : undefined;
-      onConfirm(selectedService, scheduledAt, effectiveVehicle, totalCents, result.id, taxCents, subtotalCents, selectedAddOnIds, dirtinessLevel, user ? null : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() });
+      onConfirm(selectedService, scheduledAt, effectiveVehicle, totalCents, result.id, taxCents, subtotalCents, selectedAddOnIds, dirtinessLevel, user ? null : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }, bookingAddress, bookingAddressZip);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Payment failed';
       console.error('createPaymentIntent failed:', err);
@@ -432,6 +439,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     } else {
       setShowAddOns(true);
     }
+  };
+
+  const handleAddressSelect = (address: string, zip: string | null) => {
+    setBookingAddress(address);
+    setBookingAddressZip(zip);
+    setShowAddressStep(false);
   };
 
   // Guest info (only when !user)
@@ -799,7 +812,9 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                           dirtinessLevel,
                           user
                             ? undefined
-                            : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }
+                            : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() },
+                          bookingAddress,
+                          bookingAddressZip
                         );
                       }}
                       onError={(msg) => {
@@ -923,6 +938,17 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     );
   }
 
+  // Address step — shown first
+  if (showAddressStep) {
+    return (
+      <AddressStep
+        user={user}
+        onSelect={(address, zip) => handleAddressSelect(address, zip)}
+        onClose={onClose}
+      />
+    );
+  }
+
   // Service Selection Screen
   return (
     <>
@@ -954,6 +980,18 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                 )}
               </div>
             </div>
+            {bookingAddress && (
+              <button
+                type="button"
+                onClick={() => setShowAddressStep(true)}
+                className="flex items-center gap-1 text-xs text-gray-500 font-medium mt-1 hover:text-black transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" />
+                </svg>
+                <span className="truncate max-w-[180px]">{bookingAddress}</span>
+              </button>
+            )}
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-6 pt-2">
           {showAiInput && (
