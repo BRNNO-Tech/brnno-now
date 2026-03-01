@@ -82,6 +82,29 @@ export interface CreateBookingParams {
   guest_phone?: string | null;
 }
 
+/** Payload shape expected by send-booking-confirmation edge function */
+export interface BookingConfirmationRecord {
+  id: string;
+  user_id: string | null;
+  is_guest?: boolean;
+  guest_email?: string | null;
+  guest_name?: string | null;
+  service_name: string;
+  cost: number;
+  location?: string | null;
+  scheduled_at?: string | null;
+}
+
+/** Call the edge function to send the booking confirmation email via Resend. Fire-and-forget so booking success does not depend on email. */
+export function sendBookingConfirmationEmail(record: BookingConfirmationRecord): void {
+  supabase.functions
+    .invoke('send-booking-confirmation', { body: { record } })
+    .then(({ error }) => {
+      if (error) console.warn('Booking confirmation email failed:', error);
+    })
+    .catch((err) => console.warn('Booking confirmation email error:', err));
+}
+
 export async function createBooking(params: CreateBookingParams): Promise<{ id: string }> {
   const status = params.status ?? 'pending';
   const { data, error } = await supabase
@@ -110,6 +133,18 @@ export async function createBooking(params: CreateBookingParams): Promise<{ id: 
 
   if (error) throw error;
   if (!data?.id) throw new Error('No id returned from createBooking');
+
+  sendBookingConfirmationEmail({
+    id: data.id,
+    user_id: params.userId ?? null,
+    is_guest: params.is_guest ?? false,
+    guest_email: params.guest_email ?? null,
+    guest_name: params.guest_name ?? null,
+    service_name: params.serviceName,
+    cost: params.cost,
+    location: params.location ?? 'At your location',
+  });
+
   return { id: data.id };
 }
 

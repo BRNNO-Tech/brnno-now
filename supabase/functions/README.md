@@ -19,6 +19,7 @@ Setup Intents do **not** show dollar amounts because they never charge; they onl
 
 2. **Secrets**: In Supabase Dashboard → Project Settings → Edge Functions → Secrets, add:
    - `STRIPE_SECRET_KEY` = your Stripe secret key (e.g. `sk_test_...` for test mode).
+   - `RESEND_API_KEY` = your Resend API key (required for **send-booking-confirmation** to email customers after they book).
 
 3. **Deploy**: From the project root:
    ```bash
@@ -29,6 +30,7 @@ Setup Intents do **not** show dollar amounts because they never charge; they onl
    supabase functions deploy save-payment-method
    supabase functions deploy capture-payment
    supabase functions deploy cancel-payment
+   supabase functions deploy send-booking-confirmation
    ```
    Replace `YOUR_PROJECT_REF` with the ref from your Supabase URL (e.g. `ozgccawuniacwglapzww`).
 

@@ -16,5 +16,8 @@ export async function hasRole(userId: string, role: string): Promise<boolean> {
 }
 
 export async function addRole(userId: string, role: string): Promise<void> {
-  await supabase.from('user_roles').insert({ user_id: userId, role });
+  const { error } = await supabase
+    .from('user_roles')
+    .upsert({ user_id: userId, role }, { onConflict: 'user_id,role' });
+  if (error) throw error;
 }

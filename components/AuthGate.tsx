@@ -27,7 +27,6 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       addRole(user.id, 'customer')
         .then(() => setHasCustomerRole(true))
         .catch(() => {
-          // Role might already exist (e.g. from a previous signup); re-fetch and allow in if they have it
           getUserRoles(user.id).then((roles) => {
             setHasCustomerRole(roles.includes('customer'));
           }).catch(() => setHasCustomerRole(false));
@@ -35,13 +34,19 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       return;
     }
     getUserRoles(user.id)
-      .then((roles) => {
+      .then(async (roles) => {
         if (roles.includes('customer')) {
           setHasCustomerRole(true);
         } else if (roles.includes('detailer')) {
           navigate('/detailer/dashboard', { replace: true });
         } else {
-          setHasCustomerRole(false);
+          // No role yet: auto-add customer so returning sign-ins don't see the gate every time
+          try {
+            await addRole(user.id, 'customer');
+            setHasCustomerRole(true);
+          } catch {
+            setHasCustomerRole(false);
+          }
         }
       })
       .catch(() => setHasCustomerRole(false));
