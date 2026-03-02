@@ -36,6 +36,8 @@ export interface UserProfile {
   rating: number;
   trips: number;
   balance: number;
+  /** Avatar URL (from Supabase Auth user_metadata or Storage). */
+  avatarUrl?: string | null;
 }
 
 /** Vehicle size tier used for pricing (Sedan, Medium, Large, XL). */

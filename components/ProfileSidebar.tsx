@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import type { StripeCardElement } from '@stripe/stripe-js';
@@ -17,6 +17,7 @@ import {
   removePaymentMethod,
   type PaymentMethodDisplay,
 } from '../services/paymentMethods';
+import { supabase } from '../lib/supabase';
 
 // Read Stripe publishable key: trim and strip optional quotes so .env quirks don't break it
 function getStripePublishableKey(): string | undefined {
@@ -175,6 +176,66 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
   const [authError, setAuthError] = useState<string | null>(null);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  const avatarFileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !authUser?.id) return;
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowed.includes(file.type)) {
+      setAvatarError('Please choose a JPEG, PNG, WebP or GIF image.');
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setAvatarError('Image must be under 4 MB.');
+      return;
+    }
+    setAvatarError(null);
+    setAvatarUploading(true);
+    const BUCKET_ID = 'avatars';
+    try {
+      const ext = file.name.split('.').pop() || 'jpg';
+      const path = `${authUser.id}/${crypto.randomUUID()}.${ext}`;
+      let { error: uploadError } = await supabase.storage.from(BUCKET_ID).upload(path, file, { upsert: true });
+
+      if (uploadError) {
+        const isBucketNotFound =
+          uploadError.message?.toLowerCase().includes('bucket') ||
+          uploadError.message?.toLowerCase().includes('not found') ||
+          uploadError.message?.includes('400');
+        if (isBucketNotFound) {
+          const { data: buckets } = await supabase.storage.listBuckets();
+          const bucketIds = buckets?.map((b) => b.id) ?? [];
+          const createResult = await supabase.storage.createBucket(BUCKET_ID, { public: true });
+          if (createResult.error) {
+            const hint =
+              bucketIds.length === 0
+                ? ' No buckets in this project — your app may be using a different Supabase project than the Dashboard. In Dashboard go to Settings → API and compare Project URL with VITE_SUPABASE_URL in .env.local.'
+                : ` Buckets in this project: ${bucketIds.join(', ')}. Create one named exactly "avatars" in Dashboard → Storage, or fix VITE_SUPABASE_URL to match the project where you created it.`;
+            throw new Error('Bucket "avatars" not found.' + hint);
+          }
+          const retry = await supabase.storage.from(BUCKET_ID).upload(path, file, { upsert: true });
+          if (retry.error) throw retry.error;
+          uploadError = null;
+        } else {
+          throw uploadError;
+        }
+      }
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage.from(BUCKET_ID).getPublicUrl(path);
+        const { error: updateError } = await supabase.auth.updateUser({ data: { avatar_url: urlData.publicUrl } });
+        if (updateError) throw updateError;
+      }
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : 'Failed to update photo.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
 
   // Reset view when sidebar closes
   useEffect(() => {
@@ -1016,16 +1077,41 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
         return (
           <div className="animate-in fade-in duration-700 h-full flex flex-col">
             <div className="flex items-center gap-6 mb-12 pt-6 px-2">
-              <div className="w-24 h-24 bg-gray-50 rounded-[40px] flex-shrink-0 overflow-hidden shadow-2xl border-4 border-white ring-1 ring-gray-100 group relative">
-                <img src={`https://picsum.photos/seed/user/300/300`} alt="Avatar" className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-700" />
-                <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors" />
-              </div>
+              <input
+                ref={avatarFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={handleAvatarChange}
+              />
+              <button
+                type="button"
+                onClick={() => authUser && avatarFileInputRef.current?.click()}
+                disabled={!authUser || avatarUploading}
+                className="w-24 h-24 bg-gray-50 rounded-[40px] flex-shrink-0 overflow-hidden shadow-2xl border-4 border-white ring-1 ring-gray-100 group relative disabled:opacity-70 disabled:cursor-wait"
+              >
+                {avatarUploading ? (
+                  <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
+                    <span className="text-xs font-black">…</span>
+                  </div>
+                ) : (
+                  <>
+                    <img
+                      src={user.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'U')}&size=96&background=random`}
+                      alt="Avatar"
+                      className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-700"
+                    />
+                    <div className="absolute inset-0 bg-black/5 group-hover:bg-transparent transition-colors" />
+                  </>
+                )}
+              </button>
               <div>
                 <h2 className="font-black text-3xl tracking-tighter leading-none mb-3">{user.name}</h2>
                 <div className="flex items-center gap-2 text-[9px] bg-black text-white px-4 py-1.5 rounded-full w-fit font-black uppercase tracking-[0.2em] shadow-lg shadow-black/20">
                   <span className="text-yellow-400">★</span>
                   <span>{user.rating} VIP</span>
                 </div>
+                {avatarError && <p className="text-xs text-red-600 font-medium mt-2">{avatarError}</p>}
               </div>
             </div>
 

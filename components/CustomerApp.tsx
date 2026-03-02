@@ -22,19 +22,20 @@ import { getDetailerLocation } from '../services/detailerLocation';
 
 const POLL_INTERVAL_MS = 2500;
 
-function userProfileFromAuth(user: { email?: string | null; user_metadata?: { full_name?: string } }): UserProfile {
+function userProfileFromAuth(user: { email?: string | null; user_metadata?: { full_name?: string; avatar_url?: string | null } }): UserProfile {
   const name = user.user_metadata?.full_name ?? user.email ?? 'Customer';
   return {
     name,
     rating: 0,
     trips: 0,
     balance: 0,
+    avatarUrl: user.user_metadata?.avatar_url ?? null,
   };
 }
 
 const CustomerApp: React.FC = () => {
   const { user, signOut, signUp } = useAuth();
-  const userProfile: UserProfile = user ? userProfileFromAuth(user) : { name: '', rating: 0, trips: 0, balance: 0 };
+  const userProfile: UserProfile = user ? userProfileFromAuth(user) : { name: '', rating: 0, trips: 0, balance: 0, avatarUrl: null };
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [status, setStatus] = useState<BookingStatus>(BookingStatus.IDLE);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
