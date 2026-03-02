@@ -184,7 +184,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           setError(err.message ?? 'Sign up failed');
         }
       } else {
-        setMessage('Account created! You can sign in now.');
+        setMessage('Account created! Check your email—and spam folder—for a confirmation link, then sign in.');
       }
     }
     setSubmitting(false);

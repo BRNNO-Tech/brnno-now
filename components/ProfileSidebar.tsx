@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import type { StripeCardElement } from '@stripe/stripe-js';
 import { UserProfile, PastBooking, VehicleInfo, vehicleDisplayString } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { listBookingsByUser } from '../services/bookings';
@@ -75,7 +76,7 @@ function AddCardForm({
     try {
       const { client_secret } = await createSetupIntent();
       const { setupIntent, error } = await stripe.confirmCardSetup(client_secret, {
-        payment_method: { card: cardEl },
+        payment_method: { card: cardEl as unknown as StripeCardElement },
         return_url: `${window.location.origin}/`,
       });
       if (error) {
@@ -337,7 +338,7 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
           setAuthError(err.message ?? 'Sign up failed');
         }
       } else {
-        setAuthMessage('Account created! You can sign in now.');
+        setAuthMessage('Account created! Check your email—and spam folder—for a confirmation link, then sign in.');
       }
     }
     setAuthSubmitting(false);
@@ -1050,13 +1051,13 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
             </div>
 
             <nav className="flex-grow space-y-2 px-1">
-              {[
+              {([
                 { id: 'history', label: 'Booking History', icon: '📅' },
                 { id: 'vehicle', label: 'My vehicle', icon: '🚗' },
                 { id: 'payment', label: 'Wallet & Pay', icon: '💳' },
                 { id: 'support', label: 'Help Center', icon: '❓' },
                 { id: 'settings', label: 'Settings', icon: '⚙️' }
-              ].map((item) => {
+              ] as { id: string; label: string; icon: string; badge?: string }[]).map((item) => {
                 const isActive = currentView === item.id;
                 return (
                   <button 
