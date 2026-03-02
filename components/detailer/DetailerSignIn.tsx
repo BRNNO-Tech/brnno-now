@@ -80,7 +80,7 @@ const DetailerSignIn: React.FC = () => {
     <div className="min-h-screen w-full flex flex-col items-center justify-center bg-gray-100 p-6">
       <div className="w-full max-w-sm">
         <div className="glass rounded-[40px] shadow-2xl border border-white/40 p-8 mb-6">
-          <h1 className="text-3xl font-black tracking-tighter text-center mb-2">BRNNO Drive</h1>
+          <h1 className="text-3xl font-black tracking-tighter text-center mb-2">BRNNO Now</h1>
           <p className="text-gray-500 text-sm font-medium text-center mb-8">
             Sign in as a detailer
           </p>
