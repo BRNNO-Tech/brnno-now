@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Detailer, BookingStatus } from '../types';
 import { MOCK_DETAILERS } from '../constants';
 
@@ -19,6 +19,16 @@ declare global {
 const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
   const [movingDetailers, setMovingDetailers] = useState<Detailer[]>(MOCK_DETAILERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // When EN_ROUTE with assigned pro, show only that detailer so their live (polled) position is visible.
+  // Hide marker when detailer is offline (lat/lng invalid) so customer map doesn't show a stale dot.
+  const detailersToShow = useMemo(() => {
+    if (status === BookingStatus.EN_ROUTE && assignedDetailer) {
+      const hasValidPosition = Number.isFinite(assignedDetailer.lat) && Number.isFinite(assignedDetailer.lng);
+      if (hasValidPosition) return [assignedDetailer];
+      return [];
+    }
+    return movingDetailers;
+  }, [status, assignedDetailer, movingDetailers]);
   const [eta, setEta] = useState(8);
   const cardRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
@@ -50,62 +60,62 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
   const detailerStartPositionsRef = useRef<Map<string, { lat: number; lng: number }>>(new MapConstructor()); // Store starting positions
   const detailerRoutesRef = useRef<Map<string, DetailerRoute>>(new MapConstructor()); // Ref to track current routes for animation
 
+  const DEFAULT_CENTER = { lat: 40.7128, lng: -74.0060 };
+
   // Get user's actual location
   useEffect(() => {
     if (!navigator.geolocation) {
       setLocationError('Geolocation is not supported by your browser');
-      // Fallback to default location
-      setUserLocation({ lat: 40.7128, lng: -74.0060 });
+      setUserLocation(DEFAULT_CENTER);
       return;
     }
 
+    let cancelled = false;
+    const fallback = () => {
+      if (cancelled) return;
+      setUserLocation((prev) => (prev === null ? DEFAULT_CENTER : prev));
+      setLocationError((prev) => prev || 'Using default location.');
+    };
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        if (cancelled) return;
         const location = {
           lat: position.coords.latitude,
           lng: position.coords.longitude
         };
         setUserLocation(location);
         setLocationError(null);
-        
-        // Update map center if map is already loaded
         if (mapInstanceRef.current) {
           mapInstanceRef.current.setCenter(location);
-          if (userMarkerRef.current) {
-            userMarkerRef.current.setPosition(location);
-          }
-          if (pulseOverlayRef.current) {
-            pulseOverlayRef.current.draw();
-          }
+          if (userMarkerRef.current) userMarkerRef.current.setPosition(location);
+          if (pulseOverlayRef.current) pulseOverlayRef.current.draw();
         }
       },
       (error) => {
-        // Location is optional; we fall back to default. Only warn in dev to reduce console noise.
+        if (cancelled) return;
         if (import.meta.env.DEV) {
           console.warn('Location unavailable:', error.code === 1 ? 'permission denied' : error.code === 2 ? 'unavailable' : 'timeout');
         }
-        let errorMessage = 'Unable to get your location';
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = 'Location permission denied. Using default location.';
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information unavailable. Using default location.';
-            break;
-          case error.TIMEOUT:
-            errorMessage = 'Location request timed out. Using default location.';
-            break;
-        }
+        const errorMessage =
+          error.code === error.PERMISSION_DENIED
+            ? 'Location permission denied. Using default location.'
+            : error.code === error.POSITION_UNAVAILABLE
+              ? 'Location information unavailable. Using default location.'
+              : error.code === error.TIMEOUT
+                ? 'Location request timed out. Using default location.'
+                : 'Unable to get your location. Using default location.';
         setLocationError(errorMessage);
-        // Fallback to default location
-        setUserLocation({ lat: 40.7128, lng: -74.0060 });
+        setUserLocation(DEFAULT_CENTER);
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+
+    const safetyTimeout = setTimeout(fallback, 12000);
+    return () => {
+      cancelled = true;
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   // Load Google Maps API
@@ -347,7 +357,7 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
     markersRef.current = [];
     labelOverlaysRef.current = [];
 
-    movingDetailers.forEach(detailer => {
+    detailersToShow.forEach(detailer => {
       const isAssigned = assignedDetailer?.id === detailer.id;
       const isSelected = selectedId === detailer.id;
       const isEnRoute = isAssigned && status === BookingStatus.EN_ROUTE;
@@ -423,7 +433,7 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
       // Create label overlay if assigned or selected
       if (isAssigned || isSelected) {
         const labelOverlay = new window.google.maps.OverlayView();
-        labelOverlay.onAdd = function() {
+        labelOverlay.onAdd = function(this: google.maps.OverlayView & { labelDiv?: HTMLElement }) {
           const div = document.createElement('div');
           div.className = 'detailer-label';
           div.style.position = 'absolute';
@@ -442,7 +452,7 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
           }
           
           div.innerHTML = labelHTML;
-          
+          this.labelDiv = div;
           const panes = this.getPanes();
           if (panes) {
             panes.overlayMouseTarget.appendChild(div);
@@ -454,14 +464,17 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
           if (!projection) return;
           
           const position = projection.fromLatLngToDivPixel({ lat: detailer.lat, lng: detailer.lng });
-          const div = this.getPanes()?.overlayMouseTarget.lastChild as HTMLElement;
+          const div = (this as google.maps.OverlayView & { labelDiv?: HTMLElement }).labelDiv;
           if (div && position) {
             div.style.left = (position.x - div.offsetWidth / 2) + 'px';
             div.style.top = (position.y - 50) + 'px';
           }
         };
         
-        labelOverlay.onRemove = function() {};
+        labelOverlay.onRemove = function(this: google.maps.OverlayView & { labelDiv?: HTMLElement }) {
+          if (this.labelDiv?.parentNode) this.labelDiv.remove();
+          this.labelDiv = undefined;
+        };
         labelOverlay.setMap(map);
         labelOverlaysRef.current.push(labelOverlay);
       }
@@ -488,12 +501,13 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
     }
   }, [userLocation, mapLoaded]);
 
-  // Update markers when detailers move or selection changes
+  // Update markers when detailers move or selection changes (detailersToShow includes live assigned position when EN_ROUTE)
+  // Exclude detailerRoutes so we don't redraw on every animation tick and stack overlays
   useEffect(() => {
     if (mapInstanceRef.current && mapLoaded) {
       createDetailerMarkers(mapInstanceRef.current);
     }
-  }, [movingDetailers, selectedId, assignedDetailer, status, mapLoaded, detailerRoutes]);
+  }, [detailersToShow, selectedId, assignedDetailer, status, mapLoaded]);
 
   // Initialize route when detailer is assigned and EN_ROUTE
   useEffect(() => {
@@ -700,7 +714,7 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const selectedDetailer = movingDetailers.find(d => d.id === selectedId);
+  const selectedDetailer = detailersToShow.find(d => d.id === selectedId);
 
   return (
     <div className="absolute inset-0 overflow-hidden">

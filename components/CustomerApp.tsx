@@ -5,7 +5,7 @@ import BookingFlow from './BookingFlow';
 import ActiveBooking from './ActiveBooking';
 import { BookingStatus, Service, Detailer, VehicleInfo, vehicleDisplayString } from '../types';
 import { UserProfile } from '../types';
-import { getServicePrice } from '../constants';
+import { getServicePrice, SERVICES } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
 import {
   listPaymentMethods,
@@ -16,7 +16,7 @@ import {
   type PaymentMethodDisplay,
 } from '../services/paymentMethods';
 import { supabase } from '../lib/supabase';
-import { createBooking, updateBookingStatus, getBookingById, cancelBooking } from '../services/bookings';
+import { createBooking, updateBookingStatus, getBookingById, cancelBooking, getActiveBookingForUser } from '../services/bookings';
 import { sendMessage } from '../services/bookingChat';
 import { getDetailerLocation } from '../services/detailerLocation';
 
@@ -34,7 +34,7 @@ function userProfileFromAuth(user: { email?: string | null; user_metadata?: { fu
 }
 
 const CustomerApp: React.FC = () => {
-  const { user, signOut, signUp } = useAuth();
+  const { user, session, loading: authLoading, signOut, signUp } = useAuth();
   const userProfile: UserProfile = user ? userProfileFromAuth(user) : { name: '', rating: 0, trips: 0, balance: 0, avatarUrl: null };
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [status, setStatus] = useState<BookingStatus>(BookingStatus.IDLE);
@@ -63,6 +63,80 @@ const CustomerApp: React.FC = () => {
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
   const bookingCreatedForSearchRef = useRef(false);
   const currentSearchBookingIdRef = useRef<string | null>(null);
+  /** Restore active booking only once per user on load; do not overwrite if we already restored for this user. */
+  const restoredForUserIdRef = useRef<string | null>(null);
+
+  // Restore active booking from DB when session is ready (e.g. after refresh) so live UI reappears
+  useEffect(() => {
+    if (authLoading || !user?.id || !session) {
+      if (!user?.id) restoredForUserIdRef.current = null;
+      return;
+    }
+    if (restoredForUserIdRef.current === user.id) return;
+    let cancelled = false;
+
+    function applyRestore(row: Awaited<ReturnType<typeof getActiveBookingForUser>>) {
+      if (!row || cancelled) return;
+      restoredForUserIdRef.current = user!.id;
+      const service = SERVICES.find((s) => s.name === row.service_name) ?? null;
+      setCurrentBookingId(row.id);
+      setSelectedService(service);
+      setBookingAddress(row.location ?? null);
+      setBookingAddressZip(row.address_zip ?? null);
+      if (row.detailer_id && row.detailer_name) {
+        setAssignedDetailer({
+          id: row.detailer_id,
+          name: row.detailer_name,
+          rating: 5,
+          trips: 0,
+          car: row.detailer_vehicle ?? row.car_name ?? 'Pro vehicle',
+          lat: 0,
+          lng: 0,
+          avatar: '',
+          startingAddress: '',
+        });
+      } else {
+        setAssignedDetailer(null);
+      }
+      if (row.status === 'pending_approval') {
+        setPendingApprovalBooking(row);
+        setStatus(BookingStatus.PENDING_APPROVAL);
+      } else if (row.status === 'in_progress') {
+        setStatus(BookingStatus.IN_PROGRESS);
+      } else if (row.status === 'assigned' || row.status === 'en_route') {
+        setStatus(BookingStatus.EN_ROUTE);
+      } else {
+        setStatus(BookingStatus.SEARCHING);
+      }
+    }
+
+    let retryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    getActiveBookingForUser(user.id)
+      .then((row) => {
+        if (cancelled) return;
+        if (row) {
+          applyRestore(row);
+          return;
+        }
+        // Retry once after a short delay in case session wasn't attached on first request
+        retryTimeoutId = setTimeout(() => {
+          getActiveBookingForUser(user.id).then((retryRow) => {
+            if (!cancelled) {
+              if (retryRow) applyRestore(retryRow);
+              else restoredForUserIdRef.current = user.id;
+            }
+          });
+        }, 800);
+      })
+      .catch(() => {
+        if (!cancelled) restoredForUserIdRef.current = user.id;
+      });
+
+    return () => {
+      cancelled = true;
+      if (retryTimeoutId != null) clearTimeout(retryTimeoutId);
+    };
+  }, [user?.id, session, authLoading]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -100,7 +174,7 @@ const CustomerApp: React.FC = () => {
             cost,
             status: 'pending',
             detailerName: null,
-            carName: null,
+            carName: vehicleInfo ? vehicleDisplayString(vehicleInfo) || null : null,
             location: bookingAddress ?? 'At your location',
             addressZip: bookingAddressZip ?? null,
             payment_intent_id: currentPaymentIntentId ?? null,
@@ -137,7 +211,7 @@ const CustomerApp: React.FC = () => {
         try {
           const row = await getBookingById(bookingId);
           if (!row || row.status === 'cancelled') return;
-          if (row.status === 'assigned' && row.detailer_id && row.detailer_name && row.car_name) {
+          if (row.status === 'assigned' && row.detailer_id && row.detailer_name) {
             if (pollIntervalRef.current) {
               clearInterval(pollIntervalRef.current);
               pollIntervalRef.current = null;
@@ -149,7 +223,7 @@ const CustomerApp: React.FC = () => {
               name: row.detailer_name,
               rating: 5,
               trips: 0,
-              car: row.car_name,
+              car: row.detailer_vehicle ?? row.car_name ?? 'Pro vehicle',
               lat: 0,
               lng: 0,
               avatar: '',
@@ -183,11 +257,12 @@ const CustomerApp: React.FC = () => {
 
     const pollDetailerLocation = async () => {
       const location = await getDetailerLocation(assignedDetailer.id);
-      if (location) {
-        setAssignedDetailer((prev) =>
-          prev ? { ...prev, lat: location.lat, lng: location.lng } : prev
-        );
-      }
+      setAssignedDetailer((prev) => {
+        if (!prev) return prev;
+        if (location) return { ...prev, lat: location.lat, lng: location.lng };
+        // Detailer offline or no position: clear coords so map removes their marker
+        return { ...prev, lat: NaN, lng: NaN };
+      });
     };
 
     pollDetailerLocation();

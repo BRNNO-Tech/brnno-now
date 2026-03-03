@@ -50,12 +50,18 @@ export async function getDetailerByAuthUserId(authUserId: string): Promise<Detai
 }
 
 export async function updateDetailerOnline(id: string, isOnline: boolean): Promise<void> {
+  const payload: { is_online: boolean; updated_at: string; current_lat?: null; current_lng?: null } = {
+    is_online: isOnline,
+    updated_at: new Date().toISOString(),
+  };
+  // When going offline, clear location so customer map stops showing the detailer's marker
+  if (!isOnline) {
+    payload.current_lat = null;
+    payload.current_lng = null;
+  }
   const { error } = await supabase
     .from('detailers')
-    .update({
-      is_online: isOnline,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq('id', id);
 
   if (error) throw error;
@@ -82,16 +88,17 @@ export async function listAvailableJobsForDetailer(
 }
 
 export async function acceptJob(bookingId: string, detailer: DetailerProfile): Promise<void> {
-  const carName = [detailer.vehicle_year, detailer.vehicle_make, detailer.vehicle_model]
-    .filter(Boolean)
-    .join(' ') || 'Pro vehicle';
+  const detailerVehicle =
+    [detailer.vehicle_year, detailer.vehicle_make, detailer.vehicle_model]
+      .filter(Boolean)
+      .join(' ') || 'Pro vehicle';
 
   const { error } = await supabase
     .from('detailer_bookings')
     .update({
       detailer_id: detailer.id,
       detailer_name: detailer.name,
-      car_name: carName,
+      detailer_vehicle: detailerVehicle,
       status: 'assigned',
       detailer_assigned_at: new Date().toISOString(),
       detailer_accepted_at: new Date().toISOString(),
@@ -112,6 +119,7 @@ export interface ActiveJobRow {
   detailer_id: string | null;
   detailer_name: string | null;
   car_name: string | null;
+  detailer_vehicle: string | null;
   location: string | null;
   address_zip: string | null;
   detailer_assigned_at: string | null;
@@ -137,13 +145,28 @@ export interface ActiveJobRow {
   [key: string]: unknown;
 }
 
+const ACTIVE_JOB_STATUSES = ['assigned', 'en_route', 'in_progress', 'pending_approval'] as const;
+
 export async function getActiveJobsForDetailer(detailerId: string): Promise<ActiveJobRow[]> {
   const { data, error } = await supabase
     .from('detailer_bookings')
     .select('*')
     .or(`assigned_detailer_id.eq.${detailerId},detailer_id.eq.${detailerId}`)
-    .in('status', ['assigned', 'en_route', 'in_progress', 'completed', 'pending_approval'])
+    .in('status', [...ACTIVE_JOB_STATUSES])
     .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as ActiveJobRow[];
+}
+
+/** Completed jobs for the detailer (for history / completed tab). */
+export async function getCompletedJobsForDetailer(detailerId: string): Promise<ActiveJobRow[]> {
+  const { data, error } = await supabase
+    .from('detailer_bookings')
+    .select('*')
+    .or(`assigned_detailer_id.eq.${detailerId},detailer_id.eq.${detailerId}`)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as ActiveJobRow[];

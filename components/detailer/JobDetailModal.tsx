@@ -214,12 +214,10 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
             )}
           </div>
 
-          {job.car_name && (
-            <div>
-              <h4 className="font-semibold mb-2">Vehicle</h4>
-              <p className="text-gray-700">{job.car_name}</p>
-            </div>
-          )}
+          <div>
+            <h4 className="font-semibold mb-2">Vehicle (customer)</h4>
+            <p className="text-gray-700">{job.car_name?.trim() || 'Not specified'}</p>
+          </div>
 
           {(job.add_ons?.length || job.dirtiness_level) && (
             <div>

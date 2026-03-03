@@ -25,13 +25,25 @@ const AddressStep: React.FC<AddressStepProps> = ({ user, onSelect, onClose }) =>
   const autocompleteService = useRef<google.maps.places.AutocompleteService | null>(null);
   const geocoder = useRef<google.maps.Geocoder | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [placesReady, setPlacesReady] = useState(false);
 
-  // Init Google services
+  // Poll until Google Maps/Places is loaded (script may load after we mount, e.g. from Map component)
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     if (window.google?.maps?.places) {
       autocompleteService.current = new window.google.maps.places.AutocompleteService();
       geocoder.current = new window.google.maps.Geocoder();
+      setPlacesReady(true);
+      return;
     }
+    const id = setInterval(() => {
+      if (window.google?.maps?.places) {
+        autocompleteService.current = new window.google.maps.places.AutocompleteService();
+        geocoder.current = new window.google.maps.Geocoder();
+        setPlacesReady(true);
+      }
+    }, 400);
+    return () => clearInterval(id);
   }, []);
 
   // Load saved addresses for logged-in users
@@ -44,23 +56,23 @@ const AddressStep: React.FC<AddressStepProps> = ({ user, onSelect, onClose }) =>
       .finally(() => setLoadingSaved(false));
   }, [user?.id]);
 
-  // Autocomplete
+  // Autocomplete (re-runs when Places becomes ready so address search works after script loads)
   useEffect(() => {
-    if (!query.trim() || !autocompleteService.current) {
+    if (!query.trim() || !autocompleteService.current || !window.google?.maps?.places) {
       setPredictions([]);
       return;
     }
     autocompleteService.current.getPlacePredictions(
       { input: query, types: ['address'], componentRestrictions: { country: 'us' } },
       (results, status) => {
-        if (status === window.google!.maps.places.PlacesServiceStatus.OK && results) {
+        if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
           setPredictions(results);
         } else {
           setPredictions([]);
         }
       }
     );
-  }, [query]);
+  }, [query, placesReady]);
 
   const resolveAndSelect = useCallback(
     (address: string, zip: string | null, lat: number | null, lng: number | null) => {
@@ -279,6 +291,9 @@ const AddressStep: React.FC<AddressStepProps> = ({ user, onSelect, onClose }) =>
             type="button"
             onClick={() => {
               if (!navigator.geolocation) return;
+              if (!geocoder.current && window.google?.maps) {
+                geocoder.current = new window.google.maps.Geocoder();
+              }
               navigator.geolocation.getCurrentPosition(
                 (pos) => {
                   const { latitude: lat, longitude: lng } = pos.coords;

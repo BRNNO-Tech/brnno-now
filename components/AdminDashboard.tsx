@@ -85,7 +85,7 @@ export default function AdminDashboard() {
     setAssignError(null);
     setAssignSuccess(null);
 
-    const carName =
+    const detailerVehicle =
       [detailer.vehicle_year, detailer.vehicle_make, detailer.vehicle_model]
         .filter(Boolean)
         .join(' ') || 'Pro vehicle';
@@ -96,7 +96,7 @@ export default function AdminDashboard() {
         assigned_detailer_id: detailer.id,
         detailer_id: detailer.id,
         detailer_name: detailer.name,
-        car_name: carName,
+        detailer_vehicle: detailerVehicle,
         status: 'assigned',
         detailer_assigned_at: new Date().toISOString(),
         detailer_accepted_at: new Date().toISOString(),

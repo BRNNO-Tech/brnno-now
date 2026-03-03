@@ -12,6 +12,7 @@ export interface BookingRow {
   detailer_id: string | null;
   detailer_name: string | null;
   car_name: string | null;
+  detailer_vehicle: string | null;
   location: string | null;
   address_zip: string | null;
   completed_at: string | null;
@@ -153,6 +154,29 @@ export async function getBookingById(bookingId: string): Promise<BookingRow | nu
     .from('detailer_bookings')
     .select('*')
     .eq('id', bookingId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as BookingRow | null;
+}
+
+const ACTIVE_BOOKING_STATUSES: BookingDbStatus[] = [
+  'pending',
+  'assigned',
+  'en_route',
+  'in_progress',
+  'pending_approval',
+];
+
+/** Returns the most recent active booking for the user, if any. Used to restore live UI after refresh. */
+export async function getActiveBookingForUser(userId: string): Promise<BookingRow | null> {
+  const { data, error } = await supabase
+    .from('detailer_bookings')
+    .select('*')
+    .or(`user_id.eq.${userId},converted_user_id.eq.${userId}`)
+    .in('status', ACTIVE_BOOKING_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) throw error;

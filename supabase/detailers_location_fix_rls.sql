@@ -16,7 +16,7 @@ AS $$
   SELECT EXISTS (
     SELECT 1 FROM public.detailer_bookings b
     WHERE b.detailer_id = p_detailer_id
-    AND b.status IN ('assigned', 'in_progress')
+    AND b.status IN ('assigned', 'en_route', 'in_progress')
     AND (b.user_id = p_user_id OR b.converted_user_id = p_user_id)
   );
 $$;

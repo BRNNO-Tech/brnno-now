@@ -6,6 +6,7 @@ import {
   updateDetailerOnline,
   listAvailableJobsForDetailer,
   getActiveJobsForDetailer,
+  getCompletedJobsForDetailer,
   type DetailerProfile,
   type AvailableJob,
   type ActiveJobRow,
@@ -15,8 +16,9 @@ import { getDetailerEarnings } from '../../services/detailerStats';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { AvailableJobsTab } from './AvailableJobsTab';
 import { ActiveJobsTab } from './ActiveJobsTab';
+import { CompletedJobsTab } from './CompletedJobsTab';
 
-type TabValue = 'available' | 'active';
+type TabValue = 'available' | 'active' | 'completed';
 
 const DetailerDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -25,6 +27,7 @@ const DetailerDashboard: React.FC = () => {
   const [detailerError, setDetailerError] = useState<string | null>(null);
   const [availableJobs, setAvailableJobs] = useState<AvailableJob[]>([]);
   const [activeJobs, setActiveJobs] = useState<ActiveJobRow[]>([]);
+  const [completedJobs, setCompletedJobs] = useState<ActiveJobRow[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabValue>('available');
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
@@ -84,9 +87,21 @@ const DetailerDashboard: React.FC = () => {
     }
   }
 
+  async function loadCompletedJobs() {
+    if (!detailer) return;
+    try {
+      const jobs = await getCompletedJobsForDetailer(detailer.id);
+      setCompletedJobs(jobs);
+    } catch (err) {
+      console.error('Failed to load completed jobs:', err);
+      setCompletedJobs([]);
+    }
+  }
+
   useEffect(() => {
     if (!detailer?.id) return;
     loadActiveJobs();
+    loadCompletedJobs();
   }, [detailer?.id]);
 
   useEffect(() => {
@@ -103,6 +118,7 @@ const DetailerDashboard: React.FC = () => {
     setJobsLoading(true);
     loadAvailableJobs();
     loadActiveJobs();
+    loadCompletedJobs();
     setJobsLoading(false);
 
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -110,6 +126,7 @@ const DetailerDashboard: React.FC = () => {
       console.debug('[DetailerDashboard] Polling for jobs...');
       loadAvailableJobs();
       loadActiveJobs();
+      loadCompletedJobs();
     }, 5000);
 
     return () => {
@@ -204,6 +221,7 @@ const DetailerDashboard: React.FC = () => {
 
   async function handleJobUpdated() {
     loadActiveJobs();
+    loadCompletedJobs();
     if (user?.id) {
       try {
         const d = await getDetailerByAuthUserId(user.id);
@@ -314,6 +332,7 @@ const DetailerDashboard: React.FC = () => {
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="completed">Completed ({completedJobs.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="available" className="mt-0">
@@ -336,6 +355,10 @@ const DetailerDashboard: React.FC = () => {
 
           <TabsContent value="active" className="mt-0">
             <ActiveJobsTab jobs={activeJobs} onJobUpdated={handleJobUpdated} />
+          </TabsContent>
+
+          <TabsContent value="completed" className="mt-0">
+            <CompletedJobsTab jobs={completedJobs} onRefresh={loadCompletedJobs} />
           </TabsContent>
         </Tabs>
       </div>

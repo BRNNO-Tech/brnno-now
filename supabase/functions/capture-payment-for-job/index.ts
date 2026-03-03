@@ -2,12 +2,15 @@
 // Allows detailers (who cannot use capture-payment, which requires customer auth) to trigger capture.
 // Set STRIPE_SECRET_KEY in Supabase project secrets.
 
-import Stripe from 'https://esm.sh/stripe@14?target=denonext';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+declare const Deno: {
+  env: { get(key: string): string | undefined };
+  serve(handler: (req: Request) => Promise<Response> | Response): void;
+};
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') as string, {
-  httpClient: Stripe.createFetchHttpClient(),
-});
+// @ts-expect-error - Deno URL import, resolved at runtime by Supabase Edge Functions
+import Stripe from 'https://esm.sh/stripe@14?target=denonext';
+// @ts-expect-error - Deno URL import, resolved at runtime by Supabase Edge Functions
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,18 +18,24 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+function getStripe(): Stripe {
+  const key = Deno.env.get('STRIPE_SECRET_KEY');
+  if (!key) throw new Error('STRIPE_SECRET_KEY is not set');
+  return new Stripe(key, { httpClient: Stripe.createFetchHttpClient() });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ error: 'Missing or invalid Authorization header' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const supabase = createClient(
@@ -35,14 +44,16 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
+    const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const { data: { user }, error: userError } = await supabase.auth.getUser(jwt);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid or expired token',
+          details: userError?.message ?? 'getUser failed',
+        }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const body = await req.json();
@@ -98,6 +109,7 @@ Deno.serve(async (req) => {
       );
     }
 
+    const stripe = getStripe();
     const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
     if (pi.status !== 'requires_capture') {
       return new Response(

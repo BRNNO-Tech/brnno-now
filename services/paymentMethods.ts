@@ -248,13 +248,12 @@ export async function chargeCancellationFee(paymentIntentId: string): Promise<{ 
 }
 
 export async function capturePaymentForJob(bookingId: string): Promise<{ success: boolean; captured?: boolean }> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) {
     throw new Error('Please log in.');
   }
   const { data, error } = await supabase.functions.invoke('capture-payment-for-job', {
     body: { booking_id: bookingId },
-    headers: { Authorization: `Bearer ${session.access_token}` },
   });
   if (error) throw error;
   if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Capture failed');
