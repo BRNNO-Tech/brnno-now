@@ -422,9 +422,11 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
       coupon_code: couponCode.trim().length >= 3 ? couponCode.trim() : undefined,
     })
       .then((res) => {
+        console.log('[TAX PREVIEW] result', res);
         if (!cancelled) setTaxPreview({ subtotalCents: res.subtotal_cents, taxCents: res.tax_cents, totalCents: res.total_cents });
       })
-      .catch(() => {
+      .catch((err) => {
+        console.log('[TAX PREVIEW] error', err);
         if (!cancelled) setTaxPreview(null);
       })
       .finally(() => {
