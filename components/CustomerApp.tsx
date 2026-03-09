@@ -9,7 +9,6 @@ import { getServicePrice, SERVICES } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
 import {
   listPaymentMethods,
-  capturePayment,
   cancelPayment,
   updatePaymentAmount,
   chargeCancellationFee,
@@ -19,6 +18,8 @@ import { supabase } from '../lib/supabase';
 import { createBooking, updateBookingStatus, getBookingById, cancelBooking, getActiveBookingForUser } from '../services/bookings';
 import { sendMessage } from '../services/bookingChat';
 import { getDetailerLocation } from '../services/detailerLocation';
+import { chargeTipForBooking, submitBookingReview } from '../services/bookingReviews';
+import JobCompletionModal, { type CompletedBookingSnapshot } from './JobCompletionModal';
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -58,6 +59,7 @@ const CustomerApp: React.FC = () => {
   const [pendingApprovalBooking, setPendingApprovalBooking] = useState<Awaited<ReturnType<typeof getBookingById>> | null>(null);
   const [bookingAddress, setBookingAddress] = useState<string | null>(null);
   const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
+  const [completedBookingForReview, setCompletedBookingForReview] = useState<CompletedBookingSnapshot | null>(null);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
@@ -285,6 +287,14 @@ const CustomerApp: React.FC = () => {
           setStatus(BookingStatus.PENDING_APPROVAL);
         } else if (row.status === 'in_progress') {
           setStatus(BookingStatus.IN_PROGRESS);
+        } else if (row.status === 'completed') {
+          setCompletedBookingForReview({
+            bookingId: row.id,
+            detailerId: row.detailer_id ?? assignedDetailer?.id ?? '',
+            detailerName: row.detailer_name ?? assignedDetailer?.name ?? 'Your detailer',
+            serviceName: row.service_name,
+          });
+          setPendingApprovalBooking(null);
         } else if (row.status === 'cancelled') {
           setStatus(BookingStatus.IDLE);
           setCurrentBookingId(null);
@@ -368,24 +378,30 @@ const CustomerApp: React.FC = () => {
     setBookingAddressZip(null);
   };
 
-  const handleComplete = async () => {
-    bookingCreatedForSearchRef.current = false;
-    currentSearchBookingIdRef.current = null;
-    if (currentBookingId) {
+  const handleCompletionModalSubmit = async (tipCents: number, rating: number, reviewText: string) => {
+    const snapshot = completedBookingForReview;
+    if (!snapshot) return;
+    let effectiveTip = tipCents;
+    if (tipCents > 0) {
       try {
-        const row = await getBookingById(currentBookingId);
-        if (row?.payment_intent_id) {
-          await capturePayment(row.payment_intent_id);
-        }
-        await updateBookingStatus(currentBookingId, 'completed');
+        await chargeTipForBooking(snapshot.bookingId, tipCents);
       } catch {
-        // continue clearing state
+        effectiveTip = 0;
       }
-      setCurrentBookingId(null);
     }
-    setStatus(BookingStatus.IDLE);
-    setSelectedService(null);
+    await submitBookingReview({
+      bookingId: snapshot.bookingId,
+      detailerId: snapshot.detailerId,
+      rating,
+      reviewText: reviewText || null,
+      tipAmountCents: effectiveTip,
+    });
+    setCompletedBookingForReview(null);
+    setCurrentBookingId(null);
     setAssignedDetailer(null);
+    setSelectedService(null);
+    setPendingApprovalBooking(null);
+    setStatus(BookingStatus.IDLE);
     setScheduledTime(null);
     setVehicleInfo(null);
     setBookingAddress(null);
@@ -396,15 +412,29 @@ const CustomerApp: React.FC = () => {
     if (!pendingApprovalBooking || !currentBookingId) return;
     const { payment_intent_id, adjusted_price, id } = pendingApprovalBooking;
     if (!payment_intent_id || adjusted_price == null) return;
+    let paymentUpdated = false;
     try {
       await updatePaymentAmount(payment_intent_id, adjusted_price);
+      paymentUpdated = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (!msg.includes("can't increase the amount") && !msg.includes("can't change the charge amount")) {
+        alert(msg || 'Failed to approve adjustment');
+        return;
+      }
+    }
+
+    try {
+      const updatePayload: { customer_approved_adjustment: boolean; status: string; cost?: number } = {
+        customer_approved_adjustment: true,
+        status: 'in_progress',
+      };
+      if (paymentUpdated) {
+        updatePayload.cost = adjusted_price / 100;
+      }
       const { error } = await supabase
         .from('detailer_bookings')
-        .update({
-          customer_approved_adjustment: true,
-          cost: adjusted_price / 100,
-          status: 'en_route',
-        })
+        .update(updatePayload)
         .eq('id', id);
 
       if (error) throw error;
@@ -415,9 +445,9 @@ const CustomerApp: React.FC = () => {
       }
 
       setPendingApprovalBooking(null);
-      setStatus(BookingStatus.EN_ROUTE);
+      setStatus(BookingStatus.IN_PROGRESS);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to approve adjustment');
+      alert(err instanceof Error ? err.message : 'Failed to save approval');
     }
   };
 
@@ -485,6 +515,13 @@ const CustomerApp: React.FC = () => {
 
   return (
     <div className="relative h-screen w-full bg-white overflow-hidden select-none">
+      {completedBookingForReview && (
+        <JobCompletionModal
+          booking={completedBookingForReview}
+          mode="completion"
+          onSubmit={handleCompletionModalSubmit}
+        />
+      )}
       <div className="absolute top-0 left-0 right-0 z-40 p-4 flex justify-between items-center pointer-events-none">
         <button
           onClick={() => setIsSidebarOpen(true)}
@@ -760,7 +797,6 @@ const CustomerApp: React.FC = () => {
           vehicleInfo={vehicleInfo}
           bookingId={currentBookingId}
           onCancel={handleCancel}
-          onComplete={currentBookingId ? handleComplete : undefined}
         />
       )}
 

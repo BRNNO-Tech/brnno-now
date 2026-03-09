@@ -142,7 +142,16 @@ export interface ActiveJobRow {
   payment_intent_id?: string | null;
   adjusted_price?: number | null;
   adjustment_reason?: string | null;
+  customer_approved_adjustment?: boolean | null;
   [key: string]: unknown;
+}
+
+/** Price to show for a job (agreed amount when customer approved an adjustment, otherwise cost). */
+export function getJobDisplayPrice(job: ActiveJobRow): number {
+  if (job.customer_approved_adjustment && job.adjusted_price != null && job.adjusted_price > 0) {
+    return job.adjusted_price / 100;
+  }
+  return Number(job.cost);
 }
 
 const ACTIVE_JOB_STATUSES = ['assigned', 'en_route', 'in_progress', 'pending_approval'] as const;

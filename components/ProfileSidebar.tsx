@@ -5,6 +5,8 @@ import type { StripeCardElement } from '@stripe/stripe-js';
 import { UserProfile, PastBooking, VehicleInfo, vehicleDisplayString } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { listBookingsByUser } from '../services/bookings';
+import { getReviewsByBookingIds, submitBookingReview } from '../services/bookingReviews';
+import JobCompletionModal from './JobCompletionModal';
 import { loadSavedVehicle, saveSavedVehicle, clearSavedVehicle } from '../utils/savedVehicle';
 import { fetchVehicleModels } from '../services/vehicleModels';
 import { VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS } from '../constants';
@@ -151,6 +153,7 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
   const [bookings, setBookings] = useState<PastBooking[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [bookingToRate, setBookingToRate] = useState<PastBooking | null>(null);
   
   // Payment states (loaded from API when Wallet is opened)
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodDisplay[]>([]);
@@ -262,13 +265,31 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
       .finally(() => setPaymentMethodsLoading(false));
   }, [currentView, authUser]);
 
-  // Load bookings when Menu or History view is opened (menu needs count for Orders card)
+  // Load bookings when Menu or History view is opened (menu needs count for Orders card); merge reviews
   useEffect(() => {
     if ((currentView !== 'history' && currentView !== 'menu') || !authUser?.id) return;
     setHistoryError(null);
     setHistoryLoading(true);
     listBookingsByUser(authUser.id)
-      .then(setBookings)
+      .then(async (list) => {
+        if (list.length === 0) {
+          setBookings([]);
+          return;
+        }
+        const ids = list.map((b) => b.id);
+        let reviewsMap: Map<string, { rating: number; review_text: string | null }>;
+        try {
+          reviewsMap = await getReviewsByBookingIds(ids);
+        } catch {
+          reviewsMap = new Map();
+        }
+        const merged = list.map((b) => ({
+          ...b,
+          rating: reviewsMap.get(b.id)?.rating,
+          reviewText: reviewsMap.get(b.id)?.review_text ?? null,
+        }));
+        setBookings(merged);
+      })
       .catch((err) => {
         setHistoryError(err instanceof Error ? err.message : 'Failed to load history');
         setBookings([]);
@@ -645,6 +666,26 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M9 5l7 7-7 7" /></svg>
                       </div>
                     </div>
+                    {booking.status === 'Completed' && (
+                      <div className="mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                        {booking.rating != null ? (
+                          <div className="text-sm">
+                            <span className="text-yellow-500 font-bold">★ {booking.rating}</span>
+                            {booking.reviewText && (
+                              <p className="text-gray-600 mt-1 line-clamp-2">{booking.reviewText}</p>
+                            )}
+                          </div>
+                        ) : booking.detailerId ? (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setBookingToRate(booking); }}
+                            className="text-xs font-bold text-gray-500 hover:text-black underline"
+                          >
+                            Rate this job
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </button>
                 ))
               )}
@@ -1185,10 +1226,55 @@ const ProfileSidebar: React.FC<ProfileSidebarProps> = ({ isOpen, onClose, user, 
     }
   };
 
+  const handleHistoryRateSubmit = async (tipCents: number, rating: number, reviewText: string) => {
+    const b = bookingToRate;
+    if (!b?.detailerId) return;
+    await submitBookingReview({
+      bookingId: b.id,
+      detailerId: b.detailerId,
+      rating,
+      reviewText: reviewText || null,
+      tipAmountCents: tipCents,
+    });
+    setBookingToRate(null);
+    if (authUser?.id) {
+      const list = await listBookingsByUser(authUser.id);
+      if (list.length > 0) {
+        let reviewsMap: Map<string, { rating: number; review_text: string | null }>;
+        try {
+          reviewsMap = await getReviewsByBookingIds(list.map((x) => x.id));
+        } catch {
+          reviewsMap = new Map();
+        }
+        setBookings(
+          list.map((x) => ({
+            ...x,
+            rating: reviewsMap.get(x.id)?.rating,
+            reviewText: reviewsMap.get(x.id)?.review_text ?? null,
+          }))
+        );
+      } else setBookings([]);
+    }
+  };
+
   return (
     <>
+      {bookingToRate && bookingToRate.detailerId && (
+        <div className="fixed inset-0 z-[100]">
+          <JobCompletionModal
+            booking={{
+              bookingId: bookingToRate.id,
+              detailerId: bookingToRate.detailerId,
+              detailerName: bookingToRate.detailerName,
+              serviceName: bookingToRate.serviceName,
+            }}
+            mode="history"
+            onSubmit={handleHistoryRateSubmit}
+          />
+        </div>
+      )}
       {/* Backdrop with enhanced blur */}
-      <div 
+      <div
         className={`fixed inset-0 bg-black/60 backdrop-blur-[6px] z-40 transition-opacity duration-700 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
       />

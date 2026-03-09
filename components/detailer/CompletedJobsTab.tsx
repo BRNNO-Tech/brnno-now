@@ -3,6 +3,9 @@ import { JobDetailModal } from './JobDetailModal';
 import type { ActiveJobRow } from '../../services/detailers';
 
 function formatEarn(job: ActiveJobRow): string {
+  if (job.customer_approved_adjustment && job.adjusted_price != null && job.adjusted_price > 0) {
+    return ((job.adjusted_price / 100) * 0.8).toFixed(0);
+  }
   const payout = job.detailer_payout;
   if (payout != null && payout > 0) return Number(payout).toFixed(0);
   const base = job.subtotal_cents != null ? job.subtotal_cents / 100 : Number(job.cost);

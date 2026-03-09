@@ -228,7 +228,18 @@ export async function updatePaymentAmount(
     body: { paymentIntentId, newAmount: newAmountCents },
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
-  if (error) throw error;
+  if (error) {
+    const err = error as { context?: { json?: () => Promise<{ error?: string }> } };
+    if (typeof err.context?.json === 'function') {
+      try {
+        const body = await err.context.json();
+        if (body?.error) throw new Error(body.error);
+      } catch (e) {
+        if (e instanceof Error) throw e;
+      }
+    }
+    throw error;
+  }
   if (data?.error) throw new Error(typeof data.error === 'string' ? data.error : 'Update failed');
   return data as { success: boolean };
 }

@@ -19,7 +19,11 @@ export async function getSavedAddresses(userId: string): Promise<SavedAddress[]>
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(SAVED_ADDRESSES_LIMIT);
-  if (error) throw error;
+  if (error) {
+    // Table may not exist yet (run supabase/saved_addresses.sql); avoid breaking checkout
+    console.warn('[saved_addresses]', error.message);
+    return [];
+  }
   return data ?? [];
 }
 

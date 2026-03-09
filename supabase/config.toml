@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.send-booking-confirmation]
 verify_jwt = false
+
+[functions.charge-tip-for-booking]
+verify_jwt = false
+
+[functions.update-payment-amount]
+verify_jwt = false

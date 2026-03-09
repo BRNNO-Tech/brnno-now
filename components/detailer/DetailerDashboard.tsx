@@ -13,6 +13,7 @@ import {
 } from '../../services/detailers';
 import { updateDetailerLocation } from '../../services/detailerLocation';
 import { getDetailerEarnings } from '../../services/detailerStats';
+import { getRecentReviewsForDetailer, type RecentReviewForDetailer } from '../../services/bookingReviews';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { AvailableJobsTab } from './AvailableJobsTab';
 import { ActiveJobsTab } from './ActiveJobsTab';
@@ -42,6 +43,7 @@ const DetailerDashboard: React.FC = () => {
     time: 0,
   });
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [recentReviews, setRecentReviews] = useState<RecentReviewForDetailer[]>([]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -102,6 +104,13 @@ const DetailerDashboard: React.FC = () => {
     if (!detailer?.id) return;
     loadActiveJobs();
     loadCompletedJobs();
+  }, [detailer?.id]);
+
+  useEffect(() => {
+    if (!detailer?.id) return;
+    getRecentReviewsForDetailer(detailer.id, 5)
+      .then(setRecentReviews)
+      .catch(() => setRecentReviews([]));
   }, [detailer?.id]);
 
   useEffect(() => {
@@ -315,6 +324,30 @@ const DetailerDashboard: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto mb-6">
+        <div className="bg-white rounded-[32px] p-6 shadow-sm border-2 border-gray-100">
+          <h3 className="text-lg font-black tracking-tight mb-4">Recent Reviews</h3>
+          {recentReviews.length === 0 ? (
+            <p className="text-gray-500 font-medium">No reviews yet</p>
+          ) : (
+            <ul className="space-y-4">
+              {recentReviews.map((r) => (
+                <li key={r.id} className="border-b border-gray-100 pb-4 last:border-0 last:pb-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-yellow-500 font-bold">★ {r.rating}</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                      {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  </div>
+                  {r.review_text && <p className="text-sm text-gray-700 mb-1">{r.review_text}</p>}
+                  <p className="text-xs text-gray-500">{r.service_name}{r.car_name ? ` · ${r.car_name}` : ''}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 

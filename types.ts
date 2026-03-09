@@ -65,6 +65,21 @@ export interface PastBooking {
   cost: number;
   status: 'Completed' | 'Cancelled' | 'In progress';
   detailerName: string;
+  detailerId?: string | null;
   carName: string;
   location: string;
+  /** Present when the booking has a review. */
+  rating?: number;
+  reviewText?: string | null;
+}
+
+/** One row from booking_reviews (for display). */
+export interface BookingReviewRow {
+  id: string;
+  booking_id: string;
+  detailer_id: string;
+  rating: number;
+  review_text: string | null;
+  tip_amount: number;
+  created_at: string;
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
-import { updateJobStatus, type ActiveJobRow } from '../../services/detailers';
+import { updateJobStatus, getJobDisplayPrice, type ActiveJobRow } from '../../services/detailers';
 import { supabase } from '../../lib/supabase';
 import { sendMessage } from '../../services/bookingChat';
 import { capturePaymentForJob } from '../../services/paymentMethods';
@@ -8,6 +8,9 @@ import { ADD_ONS } from '../../constants';
 import BookingChat from '../BookingChat';
 
 function formatEarn(job: ActiveJobRow): string {
+  if (job.customer_approved_adjustment && job.adjusted_price != null && job.adjusted_price > 0) {
+    return ((job.adjusted_price / 100) * 0.8).toFixed(0);
+  }
   const payout = job.detailer_payout;
   if (payout != null && payout > 0) return payout.toFixed(0);
   const base = job.subtotal_cents != null ? job.subtotal_cents / 100 : Number(job.cost);
@@ -238,7 +241,7 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
             <div className="bg-green-50 rounded-xl p-4 border border-green-100">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-gray-600">Total:</span>
-                <span className="font-semibold">${Number(job.cost).toFixed(2)}</span>
+                <span className="font-semibold">${getJobDisplayPrice(job).toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">You earn (80%):</span>

@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
 
     const { data: row } = await supabase
       .from('detailer_bookings')
-      .select('id, payment_intent_id, detailer_id, assigned_detailer_id')
+      .select('id, payment_intent_id, detailer_id, assigned_detailer_id, cost')
       .eq('id', bookingId)
       .maybeSingle();
 
@@ -118,7 +118,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    const captured = await stripe.paymentIntents.capture(paymentIntentId);
+    const authorizedAmount = pi.amount ?? 0;
+    const bookingCostCents = Math.round(Number((row as { cost?: number })?.cost ?? 0) * 100);
+    const amountToCapture =
+      bookingCostCents >= 50 && bookingCostCents <= authorizedAmount
+        ? bookingCostCents
+        : authorizedAmount;
+
+    const captured = await stripe.paymentIntents.capture(paymentIntentId, {
+      amount_to_capture: amountToCapture,
+    });
 
     return new Response(
       JSON.stringify({ success: true, captured: true, id: captured.id, status: captured.status }),

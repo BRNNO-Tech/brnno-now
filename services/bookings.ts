@@ -27,6 +27,7 @@ export interface BookingRow {
   converted_user_id?: string | null;
   adjusted_price?: number | null;
   adjustment_reason?: string | null;
+  customer_approved_adjustment?: boolean | null;
 }
 
 function formatBookingDate(completedAt: string | null, createdAt: string): string {
@@ -50,14 +51,22 @@ function dbStatusToDisplay(status: BookingDbStatus): PastBooking['status'] {
   return 'In progress';
 }
 
+function displayCost(row: BookingRow): number {
+  if (row.customer_approved_adjustment && row.adjusted_price != null && row.adjusted_price > 0) {
+    return row.adjusted_price / 100;
+  }
+  return Number(row.cost);
+}
+
 function rowToPastBooking(row: BookingRow): PastBooking {
   return {
     id: row.id,
     serviceName: row.service_name,
     date: formatBookingDate(row.completed_at, row.created_at),
-    cost: Number(row.cost),
+    cost: displayCost(row),
     status: dbStatusToDisplay(row.status),
     detailerName: row.detailer_name ?? '—',
+    detailerId: row.detailer_id ?? null,
     carName: row.car_name ?? '—',
     location: row.location ?? '',
   };
