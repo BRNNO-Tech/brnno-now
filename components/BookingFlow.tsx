@@ -392,6 +392,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
   // Fetch tax preview when on payment step and ZIP + state are filled
   const billingValid = billingZip.trim().length === 5 && billingState.trim().length >= 2;
   useEffect(() => {
+    console.log('[TAX PREVIEW] effect fired', {
+      showPayment,
+      billingZip,
+      billingState,
+      billingValid,
+    });
     if (!showPayment || !billingValid) {
       setTaxPreview(null);
       return;
