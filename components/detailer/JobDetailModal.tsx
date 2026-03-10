@@ -3,9 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
 import { updateJobStatus, getJobDisplayPrice, type ActiveJobRow } from '../../services/detailers';
 import { supabase } from '../../lib/supabase';
 import { sendMessage } from '../../services/bookingChat';
-import { capturePaymentForJob } from '../../services/paymentMethods';
 import { ADD_ONS } from '../../constants';
 import BookingChat from '../BookingChat';
+import { JobChecklistScreen } from './JobChecklistScreen';
 
 function formatEarn(job: ActiveJobRow): string {
   if (job.customer_approved_adjustment && job.adjusted_price != null && job.adjusted_price > 0) {
@@ -27,6 +27,7 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPriceAdjustment, setShowPriceAdjustment] = useState(false);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [adjustedPrice, setAdjustedPrice] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
 
@@ -78,23 +79,6 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to decline. Try again.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleCompleteJob() {
-    if (!effectiveDetailerId) return;
-    if (!confirm('Mark this job as completed?')) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await capturePaymentForJob(job.id);
-      await updateJobStatus(job.id, 'completed', effectiveDetailerId);
-      onJobUpdated();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save completion. Try again.');
     } finally {
       setLoading(false);
     }
@@ -354,11 +338,11 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
             {isInProgress && (
               <button
                 type="button"
-                onClick={handleCompleteJob}
+                onClick={() => setShowChecklist(true)}
                 disabled={loading}
                 className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-2xl font-black text-sm active:scale-[0.98] disabled:opacity-50"
               >
-                {loading ? 'Completing…' : 'Complete job'}
+                Complete job
               </button>
             )}
             <button
@@ -371,6 +355,17 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
           </div>
         </div>
       </DialogContent>
+
+      {showChecklist && (
+        <JobChecklistScreen
+          job={job}
+          onClose={() => setShowChecklist(false)}
+          onSubmit={() => {
+            onJobUpdated();
+            onClose();
+          }}
+        />
+      )}
     </Dialog>
   );
 }

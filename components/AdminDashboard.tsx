@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { getBookingById, type BookingRow } from '../services/bookings';
+import { getChecklistForBooking } from '../services/jobChecklist';
+import { JOB_CHECKLIST_SECTIONS } from '../constants/checklistItems';
 
 interface PendingBooking {
   id: string;
@@ -30,6 +33,7 @@ export default function AdminDashboard() {
   const [assigningJobId, setAssigningJobId] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+  const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -174,6 +178,7 @@ export default function AdminDashboard() {
                     booking={booking}
                     detailers={detailers}
                     onAssign={handleAssignJob}
+                    onView={() => setSelectedBookingId(booking.id)}
                     isAssigning={assigningJobId === booking.id}
                   />
                 ))}
@@ -181,6 +186,119 @@ export default function AdminDashboard() {
             </table>
           </div>
         )}
+
+        {selectedBookingId && (
+          <BookingDetailModal
+            bookingId={selectedBookingId}
+            onClose={() => setSelectedBookingId(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BookingDetailModal({
+  bookingId,
+  onClose,
+}: {
+  bookingId: string;
+  onClose: () => void;
+}) {
+  const [booking, setBooking] = useState<BookingRow | null>(null);
+  const [checklist, setChecklist] = useState<{ completed_items: string[]; submitted_at: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [b, c] = await Promise.all([
+          getBookingById(bookingId),
+          getChecklistForBooking(bookingId),
+        ]);
+        if (!cancelled) {
+          setBooking(b ?? null);
+          setChecklist(c);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [bookingId]);
+
+  const completedSet = new Set(checklist?.completed_items ?? []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" aria-hidden onClick={onClose} />
+      <div
+        className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-xl border border-gray-200 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-xl font-bold text-gray-900">Booking detail</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700 font-medium"
+            >
+              Close
+            </button>
+          </div>
+          {loading && <p className="text-gray-500">Loading...</p>}
+          {error && (
+            <p className="text-red-600 text-sm font-medium">{error}</p>
+          )}
+          {!loading && booking && (
+            <>
+              <div className="space-y-2 text-sm mb-6">
+                <p><span className="font-medium text-gray-500">Service:</span> {booking.service_name}</p>
+                <p><span className="font-medium text-gray-500">Cost:</span> ${Number(booking.cost).toFixed(2)}</p>
+                <p><span className="font-medium text-gray-500">Status:</span> {booking.status}</p>
+                <p><span className="font-medium text-gray-500">Location:</span> {booking.location ?? '—'}</p>
+                {booking.is_guest && (
+                  <p><span className="font-medium text-gray-500">Guest:</span> {booking.guest_name ?? '—'} {booking.guest_email ?? ''}</p>
+                )}
+              </div>
+              <h3 className="font-semibold text-gray-900 mb-2">Completion checklist</h3>
+              {checklist ? (
+                <>
+                  <p className="text-sm text-gray-500 mb-3">
+                    Submitted {new Date(checklist.submitted_at).toLocaleString()}
+                  </p>
+                  <div className="space-y-4">
+                    {JOB_CHECKLIST_SECTIONS.map((section) => {
+                      const itemsInSection = section.items.filter((item) => completedSet.has(item));
+                      if (itemsInSection.length === 0) return null;
+                      return (
+                        <div key={section.title}>
+                          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                            {section.title}
+                          </h4>
+                          <ul className="list-disc list-inside text-sm text-gray-800 space-y-1">
+                            {itemsInSection.map((label) => (
+                              <li key={label}>{label}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-gray-500">Checklist not submitted</p>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -190,11 +308,13 @@ function BookingRow({
   booking,
   detailers,
   onAssign,
+  onView,
   isAssigning,
 }: {
   booking: PendingBooking;
   detailers: Detailer[];
   onAssign: (bookingId: string, detailerId: string) => void;
+  onView: () => void;
   isAssigning: boolean;
 }) {
   const [selectedDetailer, setSelectedDetailer] = useState('');
@@ -206,6 +326,13 @@ function BookingRow({
           {new Date(booking.created_at).toLocaleString()}
         </div>
         <div className="text-sm text-gray-600 font-semibold">${Number(booking.cost).toFixed(2)}</div>
+        <button
+          type="button"
+          onClick={onView}
+          className="mt-1 text-xs font-medium text-blue-600 hover:underline"
+        >
+          View
+        </button>
       </td>
 
       <td className="px-6 py-4">
