@@ -55,6 +55,27 @@ export function getServicePrice(serviceId: string, vehicleSize: VehicleSize): nu
   return row[vehicleSize] ?? 0;
 }
 
+/** Midpoint minutes per service (for multi-vehicle scheduled duration totals). */
+export const SERVICE_DURATION_MINUTES: Record<string, number> = {
+  'interior-detail': 150,
+  'exterior-detail': 75,
+  'full-detail': 210,
+};
+
+export function getServiceDurationMinutes(serviceId: string): number {
+  return SERVICE_DURATION_MINUTES[serviceId] ?? 90;
+}
+
+/** Human-readable combined service time for detailers / checkout. */
+export function formatCombinedDurationMinutes(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '—';
+  if (totalMinutes < 60) return `~${totalMinutes} min`;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (m === 0) return `~${h} hr`;
+  return `~${h} hr ${m} min`;
+}
+
 /** Add-ons: optional extras with fixed price (USD). */
 export const ADD_ONS: { id: string; name: string; price: number }[] = [
   { id: 'pet-hair', name: 'Pet hair removal', price: 25 },
