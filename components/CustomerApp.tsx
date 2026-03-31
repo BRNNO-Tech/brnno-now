@@ -2,11 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import Map from './Map';
 import ProfileSidebar from './ProfileSidebar';
 import BookingFlow from './BookingFlow';
+import type { VehicleEntry } from '../services/bookings';
 import ActiveBooking from './ActiveBooking';
 import { BookingStatus, Service, Detailer, VehicleInfo, vehicleDisplayString } from '../types';
 import { UserProfile } from '../types';
 import { getServicePrice, SERVICES } from '../constants';
 import { useAuth } from '../contexts/AuthContext';
+import LandingScreen from './LandingScreen';
 import {
   listPaymentMethods,
   cancelPayment,
@@ -38,6 +40,7 @@ const CustomerApp: React.FC = () => {
   const { user, session, loading: authLoading, signOut, signUp } = useAuth();
   const userProfile: UserProfile = user ? userProfileFromAuth(user) : { name: '', rating: 0, trips: 0, balance: 0, avatarUrl: null };
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [stage, setStage] = useState<'landing' | 'main'>('landing');
   const [status, setStatus] = useState<BookingStatus>(BookingStatus.IDLE);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [assignedDetailer, setAssignedDetailer] = useState<Detailer | null>(null);
@@ -60,6 +63,7 @@ const CustomerApp: React.FC = () => {
   const [bookingAddress, setBookingAddress] = useState<string | null>(null);
   const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
   const [completedBookingForReview, setCompletedBookingForReview] = useState<CompletedBookingSnapshot | null>(null);
+  const [creatingScheduledBooking, setCreatingScheduledBooking] = useState(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
@@ -67,6 +71,19 @@ const CustomerApp: React.FC = () => {
   const currentSearchBookingIdRef = useRef<string | null>(null);
   /** Restore active booking only once per user on load; do not overwrite if we already restored for this user. */
   const restoredForUserIdRef = useRef<string | null>(null);
+
+  // After logout, return to LandingScreen
+  useEffect(() => {
+    if (!user?.id) setStage('landing');
+  }, [user?.id]);
+
+  // After successful login on LandingScreen, proceed to main map screen
+  useEffect(() => {
+    if (stage !== 'landing') return;
+    if (!user?.id) return;
+    setIsSidebarOpen(false);
+    setStage('main');
+  }, [stage, user?.id]);
 
   // Restore active booking from DB when session is ready (e.g. after refresh) so live UI reappears
   useEffect(() => {
@@ -107,6 +124,9 @@ const CustomerApp: React.FC = () => {
         setStatus(BookingStatus.IN_PROGRESS);
       } else if (row.status === 'assigned' || row.status === 'en_route') {
         setStatus(BookingStatus.EN_ROUTE);
+      } else if (row.status === 'pending' && row.scheduled_at) {
+        setScheduledTime(row.scheduled_at);
+        setStatus(BookingStatus.SCHEDULED);
       } else {
         setStatus(BookingStatus.SEARCHING);
       }
@@ -325,7 +345,8 @@ const CustomerApp: React.FC = () => {
     dirtinessLevel?: string,
     guestInfo?: { guestName: string; guestEmail: string; guestPhone: string } | null,
     address?: string | null,
-    addressZip?: string | null
+    addressZip?: string | null,
+    vehicles?: VehicleEntry[] | null
   ) => {
     setSelectedService(service);
     setVehicleInfo(vehicle ?? null);
@@ -339,12 +360,87 @@ const CustomerApp: React.FC = () => {
     setBookingAddress(address ?? null);
     setBookingAddressZip(addressZip ?? null);
 
-    if (schedule) {
-      setScheduledTime(schedule);
-      setStatus(BookingStatus.COMPLETED);
-    } else {
+    if (!schedule) {
       setStatus(BookingStatus.SEARCHING);
+      return;
     }
+
+    const scheduledAtIso = (() => {
+      const d = new Date(schedule.replace(' ', 'T'));
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    })();
+    if (!scheduledAtIso) {
+      alert('Invalid scheduled date or time. Please go back and choose again.');
+      return;
+    }
+
+    setCreatingScheduledBooking(true);
+    void (async () => {
+      try {
+        const cost = totalCents != null ? totalCents / 100 : getServicePrice(service.id, vehicle?.size ?? 'sedan');
+        const multiVehicle = vehicles && vehicles.length > 1;
+        const { id } = await createBooking({
+          userId: user?.id ?? null,
+          serviceName: multiVehicle ? `${vehicles!.length} vehicles` : service.name,
+          cost,
+          status: 'pending',
+          detailerName: null,
+          carName: vehicle ? vehicleDisplayString(vehicle) || null : null,
+          location: address ?? 'At your location',
+          addressZip: addressZip ?? null,
+          payment_intent_id: paymentIntentId ?? null,
+          tax_cents: taxCentsParam ?? null,
+          subtotal_cents: subtotalCentsParam ?? null,
+          add_ons: addOnIds && addOnIds.length > 0 ? addOnIds : null,
+          dirtiness_level: dirtinessLevel ?? null,
+          is_guest: !user,
+          guest_name: guestInfo?.guestName ?? null,
+          guest_email: guestInfo?.guestEmail ?? null,
+          guest_phone: guestInfo?.guestPhone ?? null,
+          scheduledAt: scheduledAtIso,
+          vehicles: multiVehicle ? vehicles! : null,
+        });
+        setCurrentBookingId(id);
+        setScheduledTime(schedule);
+        setChargedAmountCents(null);
+        setCurrentPaymentIntentId(null);
+        setTaxCents(null);
+        setSubtotalCents(null);
+        setBookingAddOnIds([]);
+        setBookingDirtinessLevel(null);
+        setStatus(BookingStatus.SCHEDULED);
+      } catch (err) {
+        console.warn('Scheduled createBooking failed:', err);
+        alert(err instanceof Error ? err.message : 'Failed to save your scheduled booking. Please try again.');
+      } finally {
+        setCreatingScheduledBooking(false);
+      }
+    })();
+  };
+
+  /** Close scheduled success UI without cancelling the persisted booking. */
+  const dismissScheduledSuccessToIdle = () => {
+    bookingCreatedForSearchRef.current = false;
+    currentSearchBookingIdRef.current = null;
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    setStatus(BookingStatus.IDLE);
+    setSelectedService(null);
+    setAssignedDetailer(null);
+    setScheduledTime(null);
+    setVehicleInfo(null);
+    setBookingAddress(null);
+    setBookingAddressZip(null);
+    setCurrentBookingId(null);
+    setChargedAmountCents(null);
+    setCurrentPaymentIntentId(null);
+    setTaxCents(null);
+    setSubtotalCents(null);
+    setBookingAddOnIds([]);
+    setBookingDirtinessLevel(null);
+    setBookingGuestInfo(null);
   };
 
   const handleCancel = async () => {
@@ -505,13 +601,38 @@ const CustomerApp: React.FC = () => {
       }
       setShowCreateAccountModal(false);
       setCreateAccountPassword('');
-      handleCancel();
+      dismissScheduledSuccessToIdle();
     } catch (err) {
       setCreateAccountError((err as Error).message || 'Failed to create account');
     } finally {
       setCreateAccountSubmitting(false);
     }
   };
+
+  if (stage === 'landing') {
+    return (
+      <>
+        <LandingScreen
+          onOpenProfile={() => setIsSidebarOpen(true)}
+          onContinue={({ address, zip }) => {
+            setBookingAddress(address);
+            setBookingAddressZip(zip);
+            setStage('main');
+          }}
+        />
+        <ProfileSidebar
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          user={userProfile}
+          onLogout={async () => {
+            await signOut();
+            setIsSidebarOpen(false);
+            setStage('landing');
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="relative h-screen w-full bg-white overflow-hidden select-none">
@@ -553,13 +674,22 @@ const CustomerApp: React.FC = () => {
       )}
 
       {status === BookingStatus.SELECTING && (
-        <BookingFlow
-          user={user ?? undefined}
-          onConfirm={handleConfirmBooking}
-          onClose={() => setStatus(BookingStatus.IDLE)}
-          paymentMethods={paymentMethods}
-          defaultPaymentMethod={paymentMethods.find((p) => p.isDefault) ?? paymentMethods[0] ?? undefined}
-        />
+        <>
+          <BookingFlow
+            user={user ?? undefined}
+            onConfirm={handleConfirmBooking}
+            onClose={() => setStatus(BookingStatus.IDLE)}
+            paymentMethods={paymentMethods}
+            defaultPaymentMethod={paymentMethods.find((p) => p.isDefault) ?? paymentMethods[0] ?? undefined}
+            initialAddress={bookingAddress}
+            initialAddressZip={bookingAddressZip}
+          />
+          {creatingScheduledBooking && (
+            <div className="absolute inset-0 z-[45] flex items-center justify-center bg-white/70 backdrop-blur-sm">
+              <p className="text-sm font-bold text-gray-700">Saving your booking…</p>
+            </div>
+          )}
+        </>
       )}
 
       {status === BookingStatus.SEARCHING && (
@@ -605,7 +735,7 @@ const CustomerApp: React.FC = () => {
         </div>
       )}
 
-      {status === BookingStatus.COMPLETED && (
+      {status === BookingStatus.SCHEDULED && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-6">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in fade-in zoom-in-90 duration-300">
             {/* Success icon */}
@@ -618,14 +748,13 @@ const CustomerApp: React.FC = () => {
             {/* Heading */}
             <h2 className="text-3xl font-black mb-2">You&apos;re Booked!</h2>
 
-            {/* Subtext — async messaging for manual dispatch */}
             <p className="text-gray-500 font-medium mb-2">
-              We&apos;re finding the perfect detailer for you.
+              We&apos;ll match you with a detailer before your appointment.
             </p>
             <p className="text-gray-400 text-sm mb-6">
               {bookingGuestInfo
-                ? `You'll receive a text and email at ${bookingGuestInfo.guestEmail} within 10 minutes.`
-                : "You'll receive a notification within 10 minutes once confirmed."}
+                ? `You'll receive a text and email at ${bookingGuestInfo.guestEmail} with updates.`
+                : "You'll receive a notification with confirmation details."}
             </p>
 
             {/* Booking summary */}
@@ -638,7 +767,7 @@ const CustomerApp: React.FC = () => {
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Scheduled</span>
                   <span className="font-semibold text-black">
-                    {new Date(scheduledTime.replace(' ', 'T')).toLocaleString([], {
+                    {new Date(scheduledTime.includes('T') ? scheduledTime : scheduledTime.replace(' ', 'T')).toLocaleString([], {
                       dateStyle: 'medium',
                       timeStyle: 'short',
                     })}
@@ -669,7 +798,7 @@ const CustomerApp: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={handleCancel}
+                  onClick={dismissScheduledSuccessToIdle}
                   className="w-full text-gray-400 text-sm py-1"
                 >
                   Maybe later
@@ -677,11 +806,10 @@ const CustomerApp: React.FC = () => {
               </div>
             )}
 
-            {/* Done button — only shows for logged in users */}
             {!bookingGuestInfo && (
               <button
                 type="button"
-                onClick={handleCancel}
+                onClick={dismissScheduledSuccessToIdle}
                 className="w-full bg-black text-white py-4 rounded-2xl font-bold text-lg active:scale-95 transition-transform"
               >
                 Done

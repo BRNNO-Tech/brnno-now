@@ -1,7 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import type { StripeCardElement } from '@stripe/stripe-js';
-import { SERVICES, VEHICLE_SIZES, VEHICLE_YEARS, VEHICLE_MAKES, VEHICLE_COLORS, getServicePrice, ADD_ONS, DIRTINESS_LEVELS, getDirtinessUpcharge, type DirtinessLevel } from '../constants';
+import {
+  SERVICES,
+  VEHICLE_SIZES,
+  VEHICLE_YEARS,
+  VEHICLE_MAKES,
+  VEHICLE_COLORS,
+  getServicePrice,
+  getServiceDurationMinutes,
+  formatCombinedDurationMinutes,
+  ADD_ONS,
+  DIRTINESS_LEVELS,
+  getDirtinessUpcharge,
+  type DirtinessLevel,
+} from '../constants';
+import type { VehicleEntry } from '../services/bookings';
 import { Service, VehicleInfo, vehicleDisplayString, type VehicleSize } from '../types';
 import { inferVehicleSize, isSizeSmallerThan } from '../utils/vehicleSize';
 import { loadSavedVehicle, saveSavedVehicle } from '../utils/savedVehicle';
@@ -31,13 +45,19 @@ interface BookingFlowProps {
     dirtinessLevel?: string,
     guestInfo?: GuestInfo | null,
     address?: string | null,
-    addressZip?: string | null
+    addressZip?: string | null,
+    /** Scheduled bookings only; multi-vehicle line items. */
+    vehicles?: VehicleEntry[] | null
   ) => void;
   onClose?: () => void;
   paymentMethods?: PaymentMethodDisplay[];
   defaultPaymentMethod?: PaymentMethodDisplay;
   /** When null/undefined, guest info step is shown before payment. When set (logged-in user), that step is skipped. */
   user?: { id?: string } | null;
+  /** Optional pre-filled booking address (e.g. from LandingScreen). */
+  initialAddress?: string | null;
+  /** Optional zip for the pre-filled address. */
+  initialAddressZip?: string | null;
 }
 
 const currentYear = new Date().getFullYear();
@@ -155,10 +175,18 @@ function GuestCardPaymentForm({
   );
 }
 
-const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMethods = [], defaultPaymentMethod, user }) => {
-  const [showAddressStep, setShowAddressStep] = useState(true);
-  const [bookingAddress, setBookingAddress] = useState<string | null>(null);
-  const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
+const BookingFlow: React.FC<BookingFlowProps> = ({
+  onConfirm,
+  onClose,
+  paymentMethods = [],
+  defaultPaymentMethod,
+  user,
+  initialAddress,
+  initialAddressZip,
+}) => {
+  const [showAddressStep, setShowAddressStep] = useState(!initialAddress);
+  const [bookingAddress, setBookingAddress] = useState<string | null>(initialAddress ?? null);
+  const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(initialAddressZip ?? null);
   const [selectedSize, setSelectedSize] = useState<VehicleSize>('sedan');
   const [selectedId, setSelectedId] = useState<string>(SERVICES[0].id);
   const [aiLoading, setAiLoading] = useState(false);
@@ -263,6 +291,12 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
     return today.toISOString().split('T')[0];
   });
   const [scheduledTime, setScheduledTime] = useState('10:00');
+  /** Extra vehicles (scheduled only). Primary is selectedSize + selectedId; max 3 vehicles total. */
+  const [additionalScheduledVehicles, setAdditionalScheduledVehicles] = useState<Array<{ size: VehicleSize; serviceId: string }>>([]);
+
+  useEffect(() => {
+    if (bookingMode === 'now') setAdditionalScheduledVehicles([]);
+  }, [bookingMode]);
 
   const handleAiAsk = async () => {
     if (!carInfo) return;
@@ -317,12 +351,37 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
   };
 
   const resolvedPrice = getServicePrice(selectedService.id, selectedSize);
+  const additionalScheduledLinesTotal =
+    bookingMode === 'later'
+      ? additionalScheduledVehicles.reduce((sum, v) => sum + getServicePrice(v.serviceId, v.size), 0)
+      : 0;
+  const vehiclesLineSubtotal = resolvedPrice + additionalScheduledLinesTotal;
+  const scheduledVehicleEntries: VehicleEntry[] | null = useMemo(() => {
+    if (bookingMode !== 'later') return null;
+    const primary: VehicleEntry = {
+      vehicleType: selectedSize,
+      serviceId: selectedId,
+      price: resolvedPrice,
+      duration: getServiceDurationMinutes(selectedId),
+    };
+    const rest: VehicleEntry[] = additionalScheduledVehicles.map((v) => ({
+      vehicleType: v.size,
+      serviceId: v.serviceId,
+      price: getServicePrice(v.serviceId, v.size),
+      duration: getServiceDurationMinutes(v.serviceId),
+    }));
+    return [primary, ...rest];
+  }, [bookingMode, selectedSize, selectedId, resolvedPrice, additionalScheduledVehicles]);
+  const scheduledCombinedDurationMinutes = useMemo(() => {
+    if (!scheduledVehicleEntries?.length) return 0;
+    return scheduledVehicleEntries.reduce((s, e) => s + e.duration, 0);
+  }, [scheduledVehicleEntries]);
   const addOnsTotal = selectedAddOnIds.reduce(
     (sum, id) => sum + (ADD_ONS.find((a) => a.id === id)?.price ?? 0),
     0
   );
   const dirtinessUpcharge = getDirtinessUpcharge(dirtinessLevel);
-  const subtotalBeforeTax = resolvedPrice + addOnsTotal + dirtinessUpcharge;
+  const subtotalBeforeTax = vehiclesLineSubtotal + addOnsTotal + dirtinessUpcharge;
 
   const handlePaymentComplete = async () => {
     console.log('Pay button clicked', { selectedPaymentMethod: !!selectedPaymentMethod, effectiveVehicle: !!effectiveVehicle });
@@ -373,7 +432,25 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
         }
       }
       const scheduledAt = bookingMode === 'later' ? `${scheduledDate} ${scheduledTime}` : undefined;
-      onConfirm(selectedService, scheduledAt, effectiveVehicle, totalCents, result.id, taxCents, subtotalCents, selectedAddOnIds, dirtinessLevel, user ? null : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() }, bookingAddress, bookingAddressZip);
+      const vehiclesForBooking =
+        bookingMode === 'later' && scheduledVehicleEntries && scheduledVehicleEntries.length > 1
+          ? scheduledVehicleEntries
+          : undefined;
+      onConfirm(
+        selectedService,
+        scheduledAt,
+        effectiveVehicle,
+        totalCents,
+        result.id,
+        taxCents,
+        subtotalCents,
+        selectedAddOnIds,
+        dirtinessLevel,
+        user ? null : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() },
+        bookingAddress,
+        bookingAddressZip,
+        vehiclesForBooking
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Payment failed';
       console.error('createPaymentIntent failed:', err);
@@ -652,16 +729,44 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
             <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar p-6 pt-2">
               {/* Service Summary */}
               <div className="bg-gray-50 rounded-2xl p-4 mb-4 border border-gray-100">
-                <div className="flex items-center gap-4 mb-3">
-                  {selectedService.icon && <div className="text-3xl">{selectedService.icon}</div>}
-                  <div className="flex-grow">
-                    <h4 className="font-bold text-lg">{selectedService.name}</h4>
-                    <p className="text-xs text-gray-500">{selectedService.duration}</p>
+                {bookingMode === 'later' && scheduledVehicleEntries && scheduledVehicleEntries.length > 1 ? (
+                  <div className="space-y-3">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Vehicles &amp; services</p>
+                    {scheduledVehicleEntries.map((entry, i) => {
+                      const svc = SERVICES.find((s) => s.id === entry.serviceId);
+                      const sizeLabel = VEHICLE_SIZES.find((v) => v.id === entry.vehicleType)?.label ?? entry.vehicleType;
+                      return (
+                        <div key={i} className="flex items-start gap-3 border-b border-gray-200 pb-3 last:border-0 last:pb-0">
+                          {svc?.icon && <div className="text-2xl shrink-0">{svc.icon}</div>}
+                          <div className="flex-grow min-w-0">
+                            <p className="font-bold text-gray-900">
+                              Vehicle {i + 1} · {sizeLabel}
+                            </p>
+                            <p className="text-xs text-gray-500">{svc?.name ?? entry.serviceId}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Est. {formatCombinedDurationMinutes(entry.duration)}
+                            </p>
+                          </div>
+                          <p className="font-black text-lg shrink-0">${entry.price.toFixed(2)}</p>
+                        </div>
+                      );
+                    })}
+                    <p className="text-sm font-semibold text-gray-800 pt-1 border-t border-gray-200">
+                      Combined est. time: {formatCombinedDurationMinutes(scheduledCombinedDurationMinutes)}
+                    </p>
                   </div>
-                  <div className="text-right">
-                    <p className="font-black text-xl">${resolvedPrice.toFixed(2)}</p>
+                ) : (
+                  <div className="flex items-center gap-4 mb-3">
+                    {selectedService.icon && <div className="text-3xl">{selectedService.icon}</div>}
+                    <div className="flex-grow">
+                      <h4 className="font-bold text-lg">{selectedService.name}</h4>
+                      <p className="text-xs text-gray-500">{selectedService.duration}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-black text-xl">${resolvedPrice.toFixed(2)}</p>
+                    </div>
                   </div>
-                </div>
+                )}
                 {selectedAddOnIds.length > 0 && (
                   <div className="pt-3 border-t border-gray-200">
                     <p className="text-xs text-gray-500 font-medium">Add-ons</p>
@@ -808,6 +913,10 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                           }
                         }
                         const scheduledAt = bookingMode === 'later' ? `${scheduledDate} ${scheduledTime}` : undefined;
+                        const vehiclesForBooking =
+                          bookingMode === 'later' && scheduledVehicleEntries && scheduledVehicleEntries.length > 1
+                            ? scheduledVehicleEntries
+                            : undefined;
                         onConfirm(
                           selectedService,
                           scheduledAt,
@@ -822,7 +931,8 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                             ? undefined
                             : { guestName: guestName.trim(), guestEmail: guestEmail.trim(), guestPhone: guestPhone.trim() },
                           bookingAddress,
-                          bookingAddressZip
+                          bookingAddressZip,
+                          vehiclesForBooking
                         );
                       }}
                       onError={(msg) => {
@@ -853,10 +963,25 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
 
               {/* Price Breakdown */}
               <div className="mb-6 space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 font-medium">{selectedService.name}</span>
-                  <span className="font-bold">${resolvedPrice.toFixed(2)}</span>
-                </div>
+                {bookingMode === 'later' && scheduledVehicleEntries && scheduledVehicleEntries.length > 1 ? (
+                  scheduledVehicleEntries.map((entry, i) => {
+                    const svc = SERVICES.find((s) => s.id === entry.serviceId);
+                    const sizeLabel = VEHICLE_SIZES.find((v) => v.id === entry.vehicleType)?.label ?? entry.vehicleType;
+                    return (
+                      <div key={i} className="flex justify-between text-sm gap-2">
+                        <span className="text-gray-600 font-medium">
+                          Vehicle {i + 1} ({sizeLabel}) — {svc?.name ?? entry.serviceId}
+                        </span>
+                        <span className="font-bold shrink-0">${entry.price.toFixed(2)}</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600 font-medium">{selectedService.name}</span>
+                    <span className="font-bold">${resolvedPrice.toFixed(2)}</span>
+                  </div>
+                )}
                 {selectedAddOnIds.map((id) => {
                   const addon = ADD_ONS.find((a) => a.id === id);
                   return addon ? (
@@ -934,7 +1059,11 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                     </>
                   ) : (
                     <>
-                      Pay ${subtotalBeforeTax.toFixed(2)} & Book
+                      Pay{' '}
+                      {taxPreview
+                        ? `${(taxPreview.totalCents / 100).toFixed(2)}`
+                        : subtotalBeforeTax.toFixed(2)}{' '}
+                      & Book
                     </>
                   )}
                 </button>
@@ -1097,9 +1226,14 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                       }}
                       className="text-blue-600 hover:text-blue-800 transition-colors py-1 px-2 -mr-2 cursor-pointer"
                     >
-                      Details &rsaquo;
+                      More details &rsaquo;
                     </span>
                   </div>
+                  {(service.descriptionSnippet ?? service.description)?.trim() && (
+                    <p className="text-xs text-gray-500 mt-2 leading-relaxed pr-1">
+                      {service.descriptionSnippet ?? service.description}
+                    </p>
+                  )}
                 </div>
               </button>
             ))}
@@ -1215,6 +1349,95 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
               </>
             )}
           </div>
+
+          {bookingMode === 'later' && (
+            <div className="mb-6 space-y-4">
+              {additionalScheduledVehicles.map((row, idx) => (
+                <div key={idx} className="rounded-2xl border-2 border-gray-200 p-4 bg-white shadow-sm">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Vehicle {idx + 2}</h4>
+                    <button
+                      type="button"
+                      onClick={() => setAdditionalScheduledVehicles((prev) => prev.filter((_, i) => i !== idx))}
+                      className="text-xs font-bold text-red-600 hover:text-red-800"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Vehicle type</p>
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {VEHICLE_SIZES.map((sz) => {
+                      const disabled = inferredSize != null && isSizeSmallerThan(sz.id, inferredSize);
+                      return (
+                        <button
+                          key={sz.id}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() =>
+                            !disabled &&
+                            setAdditionalScheduledVehicles((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, size: sz.id } : r))
+                            )
+                          }
+                          className={`min-h-[48px] w-full rounded-xl text-left px-3 py-2 text-sm font-bold transition-all ${
+                            disabled
+                              ? 'bg-gray-50 border-2 border-gray-100 text-gray-400 cursor-not-allowed opacity-70'
+                              : row.size === sz.id
+                                ? 'bg-black text-white shadow-md'
+                                : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
+                          }`}
+                        >
+                          <span className="block">{sz.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1">Service</label>
+                  <select
+                    value={row.serviceId}
+                    onChange={(e) =>
+                      setAdditionalScheduledVehicles((prev) =>
+                        prev.map((r, i) => (i === idx ? { ...r, serviceId: e.target.value } : r))
+                      )
+                    }
+                    className="w-full bg-white border-2 border-gray-100 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:border-black"
+                  >
+                    {SERVICES.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} — ${getServicePrice(s.id, row.size)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              {additionalScheduledVehicles.length < 2 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAdditionalScheduledVehicles((prev) => [...prev, { size: selectedSize, serviceId: selectedId }])
+                  }
+                  className="w-full py-3 rounded-2xl border-2 border-dashed border-gray-300 text-sm font-bold text-gray-700 hover:border-black hover:bg-gray-50 transition-colors"
+                >
+                  + Add another vehicle
+                </button>
+              )}
+              {scheduledVehicleEntries && scheduledVehicleEntries.length > 0 && (
+                <div className="flex justify-between items-center rounded-xl bg-gray-50 px-4 py-3 border border-gray-100">
+                  <div>
+                    <p className="text-xs text-gray-500 font-medium">Est. time (all vehicles)</p>
+                    <p className="text-sm font-black text-gray-900">
+                      {formatCombinedDurationMinutes(scheduledCombinedDurationMinutes)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500 font-medium">Vehicle services</p>
+                    <p className="text-lg font-black">${vehiclesLineSubtotal.toFixed(2)}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {vehicleError && (
             <p className="text-red-600 text-sm font-medium mb-3">{vehicleError}</p>
           )}
@@ -1307,7 +1530,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
               <div className="space-y-6">
                 <section>
                   <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Description</h4>
-                  <p className="text-gray-600 leading-relaxed text-sm">
+                  <p className="text-gray-600 leading-relaxed text-sm whitespace-pre-line">
                     {viewingDetailService.description}
                   </p>
                 </section>
@@ -1319,7 +1542,7 @@ const BookingFlow: React.FC<BookingFlowProps> = ({ onConfirm, onClose, paymentMe
                   </div>
                   <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Warranty</h4>
-                    <p className="font-bold text-gray-900">7-Day Shine</p>
+                    <p className="font-bold text-gray-900">7 days</p>
                   </div>
                 </div>
               </div>
