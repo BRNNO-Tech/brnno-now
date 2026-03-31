@@ -424,7 +424,7 @@ export default function LandingScreen({
             className="w-full py-5 rounded-2xl font-black text-base shadow-2xl active:scale-95 transition-transform flex items-center justify-between px-6 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: '#f59e0b', color: '#0a0a0a' }}
           >
-            <span>FIND A DETAILER</span>
+            <span>BOOK HERE</span>
             <span className="text-2xl">→</span>
           </button>
 
