@@ -125,17 +125,14 @@ const DetailerDashboard: React.FC = () => {
     }
     console.debug('[DetailerDashboard] Polling started');
     setJobsLoading(true);
-    loadAvailableJobs();
-    loadActiveJobs();
-    loadCompletedJobs();
-    setJobsLoading(false);
+    void Promise.all([loadAvailableJobs(), loadActiveJobs(), loadCompletedJobs()]).finally(() => {
+      setJobsLoading(false);
+    });
 
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     pollIntervalRef.current = setInterval(() => {
       console.debug('[DetailerDashboard] Polling for jobs...');
-      loadAvailableJobs();
-      loadActiveJobs();
-      loadCompletedJobs();
+      void Promise.all([loadAvailableJobs(), loadActiveJobs(), loadCompletedJobs()]);
     }, 5000);
 
     return () => {
@@ -145,7 +142,7 @@ const DetailerDashboard: React.FC = () => {
         pollIntervalRef.current = null;
       }
     };
-  }, [detailer?.id, detailer?.is_online, detailer?.service_areas]);
+  }, [detailer?.id, detailer?.is_online]);
 
   // Location tracking when detailer has active job in "assigned" status (en route)
   useEffect(() => {
@@ -214,8 +211,7 @@ const DetailerDashboard: React.FC = () => {
         setAvailableJobs([]);
       } else {
         setJobsLoading(true);
-        loadAvailableJobs();
-        setJobsLoading(false);
+        void loadAvailableJobs().finally(() => setJobsLoading(false));
       }
     } catch {
       // keep state unchanged

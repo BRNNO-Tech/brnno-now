@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/Dialog';
 import { updateJobStatus, getJobDisplayPrice, type ActiveJobRow } from '../../services/detailers';
 import { supabase } from '../../lib/supabase';
 import { sendMessage } from '../../services/bookingChat';
-import { ADD_ONS } from '../../constants';
+import { ADD_ONS, SERVICES, VEHICLE_SIZES, formatCombinedDurationMinutes } from '../../constants';
 import BookingChat from '../BookingChat';
 import { JobChecklistScreen } from './JobChecklistScreen';
 
@@ -202,8 +202,36 @@ export function JobDetailModal({ job, onClose, onJobUpdated }: JobDetailModalPro
           </div>
 
           <div>
-            <h4 className="font-semibold mb-2">Vehicle (customer)</h4>
-            <p className="text-gray-700">{job.car_name?.trim() || 'Not specified'}</p>
+            <h4 className="font-semibold mb-2">
+              {job.vehicles && job.vehicles.length > 1 ? 'Vehicles & services' : 'Vehicle (customer)'}
+            </h4>
+            {job.vehicles && job.vehicles.length > 1 ? (
+              <div className="space-y-3">
+                <ul className="space-y-2">
+                  {job.vehicles.map((v, i) => {
+                    const svc = SERVICES.find((s) => s.id === v.serviceId);
+                    const sizeLabel = VEHICLE_SIZES.find((vs) => vs.id === v.vehicleType)?.label ?? v.vehicleType;
+                    return (
+                      <li key={i} className="text-gray-700 text-sm border-b border-gray-100 pb-2 last:border-0">
+                        <span className="font-medium">Vehicle {i + 1}</span> · {sizeLabel} · {svc?.name ?? v.serviceId}
+                        <span className="block text-xs text-gray-500 mt-0.5">
+                          Est. {formatCombinedDurationMinutes(v.duration)} · ${Number(v.price).toFixed(2)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="text-sm font-semibold text-gray-800">
+                  Combined est. duration:{' '}
+                  {formatCombinedDurationMinutes(job.vehicles.reduce((sum, v) => sum + v.duration, 0))}
+                </p>
+                {job.car_name?.trim() ? (
+                  <p className="text-sm text-gray-600">Primary vehicle note: {job.car_name.trim()}</p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-gray-700">{job.car_name?.trim() || 'Not specified'}</p>
+            )}
           </div>
 
           {(job.add_ons?.length || job.dirtiness_level) && (

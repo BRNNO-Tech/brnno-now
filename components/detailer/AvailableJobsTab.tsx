@@ -63,7 +63,14 @@ export function AvailableJobsTab({
           >
             <div className="flex items-start justify-between gap-4 flex-wrap">
               <div className="flex-1 min-w-0">
-                <h3 className="font-black text-lg text-gray-900">{job.service_name}</h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-black text-lg text-gray-900">{job.service_name}</h3>
+                  {job.vehicles && job.vehicles.length > 1 && (
+                    <span className="text-xs font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                      {job.vehicles.length} vehicles
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-gray-600 mt-1">
                   {job.location ?? 'At your location'}
                   {job.address_zip ? ` (${job.address_zip})` : ''}

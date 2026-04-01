@@ -3,6 +3,14 @@ import type { PastBooking } from '../types';
 
 export type BookingDbStatus = 'pending' | 'assigned' | 'en_route' | 'in_progress' | 'completed' | 'cancelled' | 'pending_approval';
 
+/** One line item for scheduled multi-vehicle bookings (stored in `vehicles` JSONB). */
+export interface VehicleEntry {
+  vehicleType: string;
+  serviceId: string;
+  price: number;
+  duration: number;
+}
+
 export interface BookingRow {
   id: string;
   user_id: string | null;
@@ -28,6 +36,8 @@ export interface BookingRow {
   adjusted_price?: number | null;
   adjustment_reason?: string | null;
   customer_approved_adjustment?: boolean | null;
+  scheduled_at?: string | null;
+  vehicles?: VehicleEntry[] | null;
 }
 
 function formatBookingDate(completedAt: string | null, createdAt: string): string {
@@ -90,6 +100,10 @@ export interface CreateBookingParams {
   guest_name?: string | null;
   guest_email?: string | null;
   guest_phone?: string | null;
+  /** Parsed as timestamptz (ISO recommended). */
+  scheduledAt?: string | null;
+  /** Scheduled multi-vehicle only; persisted as JSONB. */
+  vehicles?: VehicleEntry[] | null;
 }
 
 /** Payload shape expected by send-booking-confirmation edge function */
@@ -137,6 +151,8 @@ export async function createBooking(params: CreateBookingParams): Promise<{ id: 
       guest_name: params.guest_name ?? null,
       guest_email: params.guest_email ?? null,
       guest_phone: params.guest_phone ?? null,
+      scheduled_at: params.scheduledAt ?? null,
+      vehicles: params.vehicles ?? null,
     })
     .select('id')
     .single();
@@ -153,6 +169,7 @@ export async function createBooking(params: CreateBookingParams): Promise<{ id: 
     service_name: params.serviceName,
     cost: params.cost,
     location: params.location ?? 'At your location',
+    scheduled_at: params.scheduledAt ?? null,
   });
 
   return { id: data.id };

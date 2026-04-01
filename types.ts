@@ -3,6 +3,7 @@ export enum BookingStatus {
   IDLE = 'IDLE',
   SELECTING = 'SELECTING',
   SEARCHING = 'SEARCHING',
+  SCHEDULED = 'SCHEDULED',
   EN_ROUTE = 'EN_ROUTE',
   ARRIVED = 'ARRIVED',
   IN_PROGRESS = 'IN_PROGRESS',
@@ -27,7 +28,10 @@ export interface Service {
   name: string;
   price: number;
   duration: string;
+  /** Full copy for the details modal (can be multi-line). */
   description: string;
+  /** Short teaser on the booking card; falls back to `description` if omitted. */
+  descriptionSnippet?: string;
   icon?: string;
 }
 

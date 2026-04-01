@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import type { VehicleEntry } from './bookings';
 
 export interface DetailerProfile {
   id: string;
@@ -35,6 +36,7 @@ export interface AvailableJob {
   subtotal_cents: number | null;
   add_ons: string[] | null;
   dirtiness_level: string | null;
+  vehicles?: VehicleEntry[] | null;
 }
 
 export async function getDetailerByAuthUserId(authUserId: string): Promise<DetailerProfile | null> {
@@ -69,22 +71,25 @@ export async function updateDetailerOnline(id: string, isOnline: boolean): Promi
 
 export async function listAvailableJobsForDetailer(
   _detailerId: string,
-  serviceAreas: string[] | null
+  _serviceAreas: string[] | null
 ): Promise<AvailableJob[]> {
-  const { data, error } = await supabase
+  const { data, error } = await supabase.rpc('get_pending_bookings_for_detailer');
+  if (!error && data != null) {
+    return data as AvailableJob[];
+  }
+  if (error) {
+    console.warn('[detailers] get_pending_bookings_for_detailer RPC failed — run migrations or check grants:', error.message);
+  }
+
+  const { data: rows, error: qErr } = await supabase
     .from('detailer_bookings')
-    .select('id, service_name, cost, location, address_zip, created_at, subtotal_cents, add_ons, dirtiness_level')
+    .select('id, service_name, cost, location, address_zip, created_at, subtotal_cents, add_ons, dirtiness_level, vehicles')
     .eq('status', 'pending')
+    .is('detailer_id', null)
     .order('created_at', { ascending: false });
 
-  if (error) throw error;
-  const rows = (data ?? []) as AvailableJob[];
-  if (serviceAreas && serviceAreas.length > 0) {
-    return rows.filter(
-      (job) => !job.address_zip || serviceAreas.includes(job.address_zip)
-    );
-  }
-  return rows;
+  if (qErr) throw qErr;
+  return (rows ?? []) as AvailableJob[];
 }
 
 export async function acceptJob(bookingId: string, detailer: DetailerProfile): Promise<void> {
@@ -120,6 +125,7 @@ export interface ActiveJobRow {
   detailer_name: string | null;
   car_name: string | null;
   detailer_vehicle: string | null;
+  vehicles?: VehicleEntry[] | null;
   location: string | null;
   address_zip: string | null;
   detailer_assigned_at: string | null;

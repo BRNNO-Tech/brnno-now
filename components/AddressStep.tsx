@@ -26,6 +26,8 @@ const AddressStep: React.FC<AddressStepProps> = ({ user, onSelect, onClose }) =>
   const geocoder = useRef<google.maps.Geocoder | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [placesReady, setPlacesReady] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   // Poll until Google Maps/Places is loaded (script may load after we mount, e.g. from Map component)
   useEffect(() => {
@@ -287,39 +289,89 @@ const AddressStep: React.FC<AddressStepProps> = ({ user, onSelect, onClose }) =>
           )}
 
           {/* Use current location (optional, user-initiated) */}
+          {locationError && (
+            <p className="text-xs text-red-600 font-medium mb-2 px-1" role="alert">
+              {locationError}
+            </p>
+          )}
           <button
             type="button"
+            disabled={locationLoading}
             onClick={() => {
-              if (!navigator.geolocation) return;
+              setLocationError(null);
+              if (typeof window !== 'undefined' && !window.isSecureContext) {
+                setLocationError(
+                  'Location needs a secure page (https://) or http://localhost. On Wi‑Fi dev, set VITE_DEV_HTTPS=1 in .env.local, restart, then open https://YOUR-PC-IP:3000 (accept the certificate warning). Or search your address above.'
+                );
+                return;
+              }
+              if (!navigator.geolocation) {
+                setLocationError('Your browser does not support location.');
+                return;
+              }
               if (!geocoder.current && window.google?.maps) {
                 geocoder.current = new window.google.maps.Geocoder();
               }
+
+              const finishWithCoords = (lat: number, lng: number) => {
+                if (geocoder.current) {
+                  geocoder.current.geocode({ location: { lat, lng } }, (results, status) => {
+                    setLocationLoading(false);
+                    if (status === 'OK' && results?.[0]) {
+                      const address = results[0].formatted_address;
+                      const zip =
+                        results[0].address_components?.find((c) => c.types.includes('postal_code'))?.short_name ?? null;
+                      resolveAndSelect(address, zip, lat, lng);
+                    } else {
+                      resolveAndSelect('Current location', null, lat, lng);
+                    }
+                  });
+                } else {
+                  setLocationLoading(false);
+                  resolveAndSelect('Current location', null, lat, lng);
+                }
+              };
+
+              const onGeoError = (err: GeolocationPositionError, isRetry: boolean) => {
+                if (err.code === err.TIMEOUT && !isRetry) {
+                  navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                      const { latitude: lat, longitude: lng } = pos.coords;
+                      finishWithCoords(lat, lng);
+                    },
+                    (e) => onGeoError(e, true),
+                    { enableHighAccuracy: false, maximumAge: 120000, timeout: 30000 }
+                  );
+                  return;
+                }
+                setLocationLoading(false);
+                const msg =
+                  err.code === err.PERMISSION_DENIED
+                    ? 'Location permission blocked. Check site settings for this page and try again.'
+                    : err.code === err.POSITION_UNAVAILABLE
+                      ? 'Could not read your position. Turn on location services or try again outdoors.'
+                      : err.code === err.TIMEOUT
+                        ? 'Location timed out. Try again or enter your address manually.'
+                        : 'Could not get your location. Try again or search your address above.';
+                setLocationError(msg);
+              };
+
+              setLocationLoading(true);
               navigator.geolocation.getCurrentPosition(
                 (pos) => {
                   const { latitude: lat, longitude: lng } = pos.coords;
-                  if (geocoder.current) {
-                    geocoder.current.geocode({ location: { lat, lng } }, (results, status) => {
-                      if (status === 'OK' && results?.[0]) {
-                        const address = results[0].formatted_address;
-                        const zip = results[0].address_components?.find((c) => c.types.includes('postal_code'))?.short_name ?? null;
-                        resolveAndSelect(address, zip, lat, lng);
-                      } else {
-                        resolveAndSelect('Current location', null, lat, lng);
-                      }
-                    });
-                  } else {
-                    resolveAndSelect('Current location', null, lat, lng);
-                  }
+                  finishWithCoords(lat, lng);
                 },
-                () => {} // user denied, do nothing
+                (err) => onGeoError(err, false),
+                { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 }
               );
             }}
-            className="w-full flex items-center gap-3 bg-gray-50 border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold text-gray-700 hover:border-gray-200 transition-colors"
+            className="w-full flex items-center gap-3 bg-gray-50 border-2 border-gray-100 rounded-2xl px-4 py-3 text-sm font-bold text-gray-700 hover:border-gray-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <svg className="w-4 h-4 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zm0 0v4m0 12v4M2 12h4m12 0h4" />
             </svg>
-            Use my current location
+            {locationLoading ? 'Getting location…' : 'Use my current location'}
           </button>
         </div>
       </div>
