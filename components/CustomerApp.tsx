@@ -620,16 +620,18 @@ const CustomerApp: React.FC = () => {
             setStage('main');
           }}
         />
-        <ProfileSidebar
-          isOpen={isSidebarOpen}
-          onClose={() => setIsSidebarOpen(false)}
-          user={userProfile}
-          onLogout={async () => {
-            await signOut();
-            setIsSidebarOpen(false);
-            setStage('landing');
-          }}
-        />
+        {isSidebarOpen && (
+          <ProfileSidebar
+            isOpen={isSidebarOpen}
+            onClose={() => setIsSidebarOpen(false)}
+            user={userProfile}
+            onLogout={async () => {
+              await signOut();
+              setIsSidebarOpen(false);
+              setStage('landing');
+            }}
+          />
+        )}
       </>
     );
   }
@@ -685,7 +687,7 @@ const CustomerApp: React.FC = () => {
             initialAddressZip={bookingAddressZip}
           />
           {creatingScheduledBooking && (
-            <div className="absolute inset-0 z-[45] flex items-center justify-center bg-white/70 backdrop-blur-sm">
+            <div className="absolute inset-0 z-[45] flex items-center justify-center bg-white/70 backdrop-blur-sm pointer-events-auto">
               <p className="text-sm font-bold text-gray-700">Saving your booking…</p>
             </div>
           )}
@@ -693,11 +695,11 @@ const CustomerApp: React.FC = () => {
       )}
 
       {status === BookingStatus.SEARCHING && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/60 backdrop-blur-sm px-6">
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/60 backdrop-blur-sm px-6 pointer-events-auto">
           {/* Spinner */}
           <div className="relative mb-6">
             <div className="w-24 h-24 border-8 border-gray-100 border-t-black rounded-full animate-spin" />
-            <div className="absolute inset-0 flex items-center justify-center text-3xl">🚗</div>
+            <div className="absolute inset-0 flex items-center justify-center text-3xl pointer-events-none">🚗</div>
           </div>
 
           {/* Heading */}
@@ -736,7 +738,7 @@ const CustomerApp: React.FC = () => {
       )}
 
       {status === BookingStatus.SCHEDULED && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-6">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-6 pointer-events-auto">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm text-center shadow-2xl animate-in fade-in zoom-in-90 duration-300">
             {/* Success icon */}
             <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -821,7 +823,7 @@ const CustomerApp: React.FC = () => {
 
       {/* Create account modal for guests */}
       {showCreateAccountModal && bookingGuestInfo && (
-        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-md p-6">
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-md p-6 pointer-events-auto">
           <div className="bg-white rounded-[40px] p-8 w-full max-w-sm shadow-2xl">
             <h3 className="text-xl font-black mb-2">Create account</h3>
             <p className="text-gray-500 text-sm mb-6">
@@ -928,12 +930,14 @@ const CustomerApp: React.FC = () => {
         />
       )}
 
-      <ProfileSidebar
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        user={userProfile}
-        onLogout={signOut}
-      />
+      {isSidebarOpen && (
+        <ProfileSidebar
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          user={userProfile}
+          onLogout={signOut}
+        />
+      )}
     </div>
   );
 };
