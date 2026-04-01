@@ -270,7 +270,7 @@ export default function LandingScreen({
 
       <div className="h-full w-full flex flex-col items-center justify-center px-6">
         <div className="w-full max-w-sm">
-          <p className="text-[10px] font-black uppercase tracking-[0.35em] mb-4" style={{ color: '#f59e0b' }}>
+          <p className="text-[10px] font-black uppercase tracking-[0.35em] mb-4" style={{ color: '#F2C94C' }}>
             Mobile Auto Detailing
           </p>
 
@@ -422,7 +422,7 @@ export default function LandingScreen({
             disabled={!canContinue}
             onClick={() => selected && onContinue({ address: selected.address, zip: selected.zip })}
             className="w-full py-5 rounded-2xl font-black text-base shadow-2xl active:scale-95 transition-transform flex items-center justify-between px-6 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ backgroundColor: '#f59e0b', color: '#0a0a0a' }}
+            style={{ backgroundColor: '#F2C94C', color: '#0a0a0a' }}
           >
             <span>BOOK HERE</span>
             <span className="text-2xl">→</span>
