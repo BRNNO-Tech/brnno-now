@@ -88,7 +88,7 @@ export default function LandingScreen({
   onContinue,
 }: {
   onOpenProfile: () => void;
-  onContinue: (address: { address: string; zip: string | null }) => void;
+  onContinue: (address: { address: string; zip: string | null; lat: number | null; lng: number | null }) => void;
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -420,7 +420,7 @@ export default function LandingScreen({
           <button
             type="button"
             disabled={!canContinue}
-            onClick={() => selected && onContinue({ address: selected.address, zip: selected.zip })}
+            onClick={() => selected && onContinue({ address: selected.address, zip: selected.zip, lat: selected.lat, lng: selected.lng })}
             className="w-full py-5 rounded-2xl font-black text-base shadow-2xl active:scale-95 transition-transform flex items-center justify-between px-6 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: '#F2C94C', color: '#0a0a0a' }}
           >

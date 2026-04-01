@@ -62,6 +62,7 @@ const CustomerApp: React.FC = () => {
   const [pendingApprovalBooking, setPendingApprovalBooking] = useState<Awaited<ReturnType<typeof getBookingById>> | null>(null);
   const [bookingAddress, setBookingAddress] = useState<string | null>(null);
   const [bookingAddressZip, setBookingAddressZip] = useState<string | null>(null);
+  const [mapCenterOverride, setMapCenterOverride] = useState<{ lat: number; lng: number } | null>(null);
   const [completedBookingForReview, setCompletedBookingForReview] = useState<CompletedBookingSnapshot | null>(null);
   const [creatingScheduledBooking, setCreatingScheduledBooking] = useState(false);
 
@@ -614,9 +615,10 @@ const CustomerApp: React.FC = () => {
       <>
         <LandingScreen
           onOpenProfile={() => setIsSidebarOpen(true)}
-          onContinue={({ address, zip }) => {
+          onContinue={({ address, zip, lat, lng }) => {
             setBookingAddress(address);
             setBookingAddressZip(zip);
+            setMapCenterOverride(lat != null && lng != null ? { lat, lng } : null);
             setStage('main');
           }}
         />
@@ -661,7 +663,7 @@ const CustomerApp: React.FC = () => {
         </div>
       </div>
 
-      <Map status={status} assignedDetailer={assignedDetailer} />
+      <Map status={status} assignedDetailer={assignedDetailer} centerOverride={mapCenterOverride} />
 
       {status === BookingStatus.IDLE && (
         <div className="absolute bottom-10 left-0 right-0 flex justify-center z-30 px-4">
