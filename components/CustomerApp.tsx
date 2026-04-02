@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Map from './Map';
 import ProfileSidebar from './ProfileSidebar';
 import BookingFlow from './BookingFlow';
@@ -65,6 +65,8 @@ const CustomerApp: React.FC = () => {
   const [mapCenterOverride, setMapCenterOverride] = useState<{ lat: number; lng: number } | null>(null);
   const [completedBookingForReview, setCompletedBookingForReview] = useState<CompletedBookingSnapshot | null>(null);
   const [creatingScheduledBooking, setCreatingScheduledBooking] = useState(false);
+  /** After landing “BOOK HERE”, wait for map tiles before opening the booking sheet. */
+  const [awaitingMapForBookingFlow, setAwaitingMapForBookingFlow] = useState(false);
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Prevents duplicate createBooking when effect re-runs due to state updates after creating. */
@@ -78,6 +80,10 @@ const CustomerApp: React.FC = () => {
     if (!user?.id) setStage('landing');
   }, [user?.id]);
 
+  useEffect(() => {
+    if (stage === 'landing') setAwaitingMapForBookingFlow(false);
+  }, [stage]);
+
   // After successful login on LandingScreen, proceed to main map screen
   useEffect(() => {
     if (stage !== 'landing') return;
@@ -85,6 +91,17 @@ const CustomerApp: React.FC = () => {
     setIsSidebarOpen(false);
     setStage('main');
   }, [stage, user?.id]);
+
+  const openBookingFlowAfterMapReady = useCallback(() => {
+    setAwaitingMapForBookingFlow(false);
+    setStatus(BookingStatus.SELECTING);
+  }, []);
+
+  useEffect(() => {
+    if (!awaitingMapForBookingFlow) return;
+    const t = setTimeout(openBookingFlowAfterMapReady, 10000);
+    return () => clearTimeout(t);
+  }, [awaitingMapForBookingFlow, openBookingFlowAfterMapReady]);
 
   // Restore active booking from DB when session is ready (e.g. after refresh) so live UI reappears
   useEffect(() => {
@@ -619,6 +636,7 @@ const CustomerApp: React.FC = () => {
             setBookingAddress(address);
             setBookingAddressZip(zip);
             setMapCenterOverride(lat != null && lng != null ? { lat, lng } : null);
+            setAwaitingMapForBookingFlow(true);
             setStage('main');
           }}
         />
@@ -663,9 +681,26 @@ const CustomerApp: React.FC = () => {
         </div>
       </div>
 
-      <Map status={status} assignedDetailer={assignedDetailer} centerOverride={mapCenterOverride} />
+      <Map
+        status={status}
+        assignedDetailer={assignedDetailer}
+        centerOverride={mapCenterOverride}
+        onFirstMapIdle={awaitingMapForBookingFlow ? openBookingFlowAfterMapReady : undefined}
+      />
 
-      {status === BookingStatus.IDLE && (
+      {awaitingMapForBookingFlow && (
+        <div className="absolute inset-0 z-[38] flex flex-col items-center justify-center bg-white/55 backdrop-blur-[2px] pointer-events-auto">
+          <div className="rounded-2xl bg-white px-8 py-5 shadow-xl border border-gray-100/90 mx-4">
+            <div className="w-8 h-8 border-2 border-gray-200 border-t-black rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm font-black text-gray-900 tracking-tight text-center">Loading map…</p>
+            <p className="text-xs text-gray-500 font-medium mt-1 text-center max-w-[220px]">
+              Your booking will open as soon as the map is ready.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {status === BookingStatus.IDLE && !awaitingMapForBookingFlow && (
         <div className="absolute bottom-10 left-0 right-0 flex justify-center z-30 px-4">
           <button
             onClick={() => setStatus(BookingStatus.SELECTING)}

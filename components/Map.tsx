@@ -7,6 +7,8 @@ interface MapProps {
   assignedDetailer?: Detailer | null;
   /** Optional center override (e.g. from "Use my current location" selection). */
   centerOverride?: { lat: number; lng: number } | null;
+  /** Fires once after the map’s first `idle` event (initial tiles/layout settled). */
+  onFirstMapIdle?: () => void;
 }
 
 // Extend Window interface for Google Maps
@@ -17,7 +19,9 @@ declare global {
   }
 }
 
-const Map: React.FC<MapProps> = ({ status, assignedDetailer, centerOverride = null }) => {
+const Map: React.FC<MapProps> = ({ status, assignedDetailer, centerOverride = null, onFirstMapIdle }) => {
+  const onFirstMapIdleRef = useRef(onFirstMapIdle);
+  onFirstMapIdleRef.current = onFirstMapIdle;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // When EN_ROUTE with assigned pro, show only that detailer so their live (polled) position is visible.
   // Hide marker when detailer is offline (lat/lng invalid) so customer map doesn't show a stale dot.
@@ -219,6 +223,14 @@ const Map: React.FC<MapProps> = ({ status, assignedDetailer, centerOverride = nu
       mapInstanceRef.current = map;
       setMapLoaded(true);
       console.log('Google Map initialized successfully');
+
+      const idleCb = onFirstMapIdleRef.current;
+      if (idleCb) {
+        window.google.maps.event.addListenerOnce(map, 'idle', () => {
+          const fn = onFirstMapIdleRef.current;
+          if (fn) fn();
+        });
+      }
 
       // Create user location marker
       const userMarker = new window.google.maps.Marker({
