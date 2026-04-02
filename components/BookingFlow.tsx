@@ -1165,80 +1165,6 @@ const BookingFlow: React.FC<BookingFlowProps> = ({
             </div>
           )}
 
-          {/* Vehicle size (drives price); cannot select smaller than inferred from make/model */}
-          <div className="mb-4">
-            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-2">Vehicle type</h4>
-            {inferredSize != null && (
-              <p className="text-xs text-gray-500 mb-2 ml-2">Based on your vehicle, only these sizes apply for fair pricing.</p>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              {VEHICLE_SIZES.map((sz) => {
-                const disabled = inferredSize != null && isSizeSmallerThan(sz.id, inferredSize);
-                return (
-                  <button
-                    key={sz.id}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => !disabled && setSelectedSize(sz.id)}
-                    className={`min-h-[52px] w-full rounded-xl text-left px-3 py-2.5 text-sm font-bold transition-all ${
-                      disabled
-                        ? 'bg-gray-50 border-2 border-gray-100 text-gray-400 cursor-not-allowed opacity-70'
-                        : selectedSize === sz.id
-                          ? 'bg-black text-white shadow-md'
-                          : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
-                    }`}
-                  >
-                    <span className="block">{sz.label}</span>
-                    {sz.sublabel && (
-                      <span className={`block text-[10px] font-medium -mt-0.5 truncate ${selectedSize === sz.id ? 'opacity-90' : 'opacity-70'}`}>
-                        {sz.sublabel}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-3 mb-6 no-scrollbar overflow-y-auto max-h-[35vh]">
-            {SERVICES.map((service) => (
-              <button
-                key={service.id}
-                onClick={() => setSelectedId(service.id)}
-                className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${
-                  selectedId === service.id 
-                    ? 'border-black bg-gray-50' 
-                    : 'border-transparent bg-white hover:border-gray-200 shadow-sm'
-                }`}
-              >
-                {service.icon && <div className="text-3xl">{service.icon}</div>}
-                <div className="flex-grow text-left">
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold">{service.name}</span>
-                    <span className="font-bold text-lg">${getServicePrice(service.id, selectedSize)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs text-gray-500 font-medium">
-                    <span>{service.duration}</span>
-                    <span 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setViewingDetailService(service);
-                      }}
-                      className="text-blue-600 hover:text-blue-800 transition-colors py-1 px-2 -mr-2 cursor-pointer"
-                    >
-                      More details &rsaquo;
-                    </span>
-                  </div>
-                  {(service.descriptionSnippet ?? service.description)?.trim() && (
-                    <p className="text-xs text-gray-500 mt-2 leading-relaxed pr-1">
-                      {service.descriptionSnippet ?? service.description}
-                    </p>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-
           {/* Vehicle */}
           <div className="mb-6">
             <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-2">Vehicle</h4>
@@ -1348,6 +1274,81 @@ const BookingFlow: React.FC<BookingFlowProps> = ({
                 </div>
               </>
             )}
+          </div>
+
+          {/* Vehicle size (drives price); cannot select smaller than inferred from make/model */}
+          <div className="mb-6">
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-2">Vehicle type</h4>
+            {inferredSize != null && (
+              <p className="text-xs text-gray-500 mb-2 ml-2">Based on your vehicle, only these sizes apply for fair pricing.</p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              {VEHICLE_SIZES.map((sz) => {
+                const disabled = inferredSize != null && isSizeSmallerThan(sz.id, inferredSize);
+                return (
+                  <button
+                    key={sz.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => !disabled && setSelectedSize(sz.id)}
+                    className={`min-h-[52px] w-full rounded-xl text-left px-3 py-2.5 text-sm font-bold transition-all ${
+                      disabled
+                        ? 'bg-gray-50 border-2 border-gray-100 text-gray-400 cursor-not-allowed opacity-70'
+                        : selectedSize === sz.id
+                          ? 'bg-black text-white shadow-md'
+                          : 'bg-white border-2 border-gray-100 text-gray-700 hover:border-gray-200'
+                    }`}
+                  >
+                    <span className="block">{sz.label}</span>
+                    {sz.sublabel && (
+                      <span className={`block text-[10px] font-medium -mt-0.5 truncate ${selectedSize === sz.id ? 'opacity-90' : 'opacity-70'}`}>
+                        {sz.sublabel}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Package */}
+          <div className="space-y-3 mb-6 no-scrollbar overflow-y-auto max-h-[35vh]">
+            {SERVICES.map((service) => (
+              <button
+                key={service.id}
+                onClick={() => setSelectedId(service.id)}
+                className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 transition-all ${
+                  selectedId === service.id
+                    ? 'border-black bg-gray-50'
+                    : 'border-transparent bg-white hover:border-gray-200 shadow-sm'
+                }`}
+              >
+                {service.icon && <div className="text-3xl">{service.icon}</div>}
+                <div className="flex-grow text-left">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold">{service.name}</span>
+                    <span className="font-bold text-lg">${getServicePrice(service.id, selectedSize)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs text-gray-500 font-medium">
+                    <span>{service.duration}</span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewingDetailService(service);
+                      }}
+                      className="text-blue-600 hover:text-blue-800 transition-colors py-1 px-2 -mr-2 cursor-pointer"
+                    >
+                      More details &rsaquo;
+                    </span>
+                  </div>
+                  {(service.descriptionSnippet ?? service.description)?.trim() && (
+                    <p className="text-xs text-gray-500 mt-2 leading-relaxed pr-1">
+                      {service.descriptionSnippet ?? service.description}
+                    </p>
+                  )}
+                </div>
+              </button>
+            ))}
           </div>
 
           {bookingMode === 'later' && (
