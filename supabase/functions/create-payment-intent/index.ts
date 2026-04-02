@@ -13,10 +13,195 @@ const PRICING_MATRIX: Record<string, Record<VehicleSize, number>> = {
   'full-detail': { sedan: 250, medium: 285, large: 315, xl: 375 },
 };
 
-const XL_PATTERNS = ['transit', 'sprinter', 'promaster', 'nv', 'express', 'savana', 'dualy', 'dually', '3500', '4500', '5500', 'chassis cab', 'e-series', 'econoline'];
-const LARGE_PATTERNS = ['f-150', 'f150', 'silverado', 'sierra 1500', 'sierra 2500', 'sierra 3500', 'ram 1500', 'ram 2500', 'ram 3500', 'tundra', 'titan', 'suburban', 'yukon xl', 'escalade esv', 'navigator l', 'armada', 'tahoe', 'yukon', 'expedition', 'sequoia', '4runner', 'wrangler', 'gladiator', 'bronco', 'ranger', 'colorado', 'canyon', 'frontier', 'tacoma', 'ridgeline', 'sierra', 'denali', 'durango', 'grand cherokee', 'telluride', 'palisade', 'atlas', 'ascent', 'highlander', 'pilot', 'passport', 'explorer', 'traverse', 'atlas cross sport'];
-const MEDIUM_PATTERNS = ['cr-v', 'crv', 'rav4', 'rav 4', 'escape', 'equinox', 'rogue', 'tucson', 'sportage', 'cx-5', 'cx5', 'forester', 'outback', 'crosstrek', 'edge', 'murano', 'pathfinder', 'acadia', 'enclave', 'compass', 'renegade', 'cherokee', 'bronco sport', 'model y', 'model x', 'id.4', 'ev6', 'ioniq 5', 'mach-e', 'mustang mach-e'];
-const SEDAN_PATTERNS = ['civic', 'accord', 'camry', 'corolla', 'altima', 'maxima', 'sentra', 'fusion', 'malibu', 'impala', 'cruze', 'spark', 'elantra', 'sonata', 'optima', 'k5', 'forte', 'rio', 'passat', 'jetta', 'golf', 'gli', 'gti', 'mazda3', 'mazda 3', 'mazda6', 'mazda 6', 'legacy', 'wrx', 'impreza', 'model 3', 'model s', 'a3', 'a4', 'a6', '3 series', '5 series', 'c-class', 'e-class', 'tlx', 'ilx', 'rlx', 'cts', 'ct5', 'ct6'];
+function normalizeVehicleText(s: string): string {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function patternMatches(haystack: string, pattern: string): boolean {
+  const hay = normalizeVehicleText(haystack).replace(/-/g, ' ');
+  const pNorm = normalizeVehicleText(pattern).replace(/-/g, ' ');
+  if (!pNorm || !hay) return false;
+  const parts = pNorm.split(' ').filter(Boolean);
+  if (parts.length >= 2) {
+    const body = parts.map(escapeRegExp).join('[^a-z0-9]+');
+    return new RegExp(`(^|[^a-z0-9])${body}([^a-z0-9]|$)`, 'i').test(hay);
+  }
+  const single = escapeRegExp(parts[0]!);
+  return new RegExp(`(^|[^a-z0-9])${single}([^a-z0-9]|$)`, 'i').test(hay);
+}
+
+function matchesAnyPattern(haystack: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => patternMatches(haystack, p));
+}
+
+// Keep in sync with utils/vehicleSize.ts (Edge cannot import app utils).
+const XL_PATTERNS = [
+  'transit',
+  'sprinter',
+  'promaster',
+  'nv200',
+  'nv2500',
+  'nv3500',
+  'nv1500',
+  'nv passenger',
+  'express',
+  'savana',
+  'dualy',
+  'dually',
+  '3500',
+  '4500',
+  '5500',
+  'chassis cab',
+  'e-series',
+  'econoline',
+] as const;
+const LARGE_PATTERNS = [
+  'f-150',
+  'f150',
+  'silverado',
+  'sierra 1500',
+  'sierra 2500',
+  'sierra 3500',
+  'ram 1500',
+  'ram 2500',
+  'ram 3500',
+  'tundra',
+  'titan',
+  'suburban',
+  'yukon xl',
+  'escalade esv',
+  'navigator l',
+  'armada',
+  'tahoe',
+  'yukon',
+  'expedition',
+  'sequoia',
+  '4runner',
+  'wrangler',
+  'gladiator',
+  'bronco',
+  'ranger',
+  'colorado',
+  'canyon',
+  'frontier',
+  'tacoma',
+  'ridgeline',
+  'sierra',
+  'denali',
+  'durango',
+  'grand cherokee',
+  'telluride',
+  'palisade',
+  'atlas',
+  'ascent',
+  'highlander',
+  'pilot',
+  'passport',
+  'explorer',
+  'traverse',
+  'atlas cross sport',
+] as const;
+const MEDIUM_PATTERNS = [
+  'cr-v',
+  'crv',
+  'rav4',
+  'rav 4',
+  'escape',
+  'equinox',
+  'rogue',
+  'tucson',
+  'sportage',
+  'cx-5',
+  'cx5',
+  'forester',
+  'outback',
+  'crosstrek',
+  'edge',
+  'murano',
+  'pathfinder',
+  'pilot',
+  'highlander',
+  '4runner',
+  'explorer',
+  'traverse',
+  'acadia',
+  'enclave',
+  'atlas',
+  'compass',
+  'renegade',
+  'cherokee',
+  'bronco sport',
+  'model y',
+  'model x',
+  'id.4',
+  'ev6',
+  'ioniq 5',
+  'mach-e',
+  'mustang mach-e',
+  'stelvio',
+  'tonale',
+] as const;
+const SEDAN_PATTERNS = [
+  'civic',
+  'accord',
+  'camry',
+  'corolla',
+  'altima',
+  'maxima',
+  'sentra',
+  'fusion',
+  'malibu',
+  'impala',
+  'cruze',
+  'spark',
+  'elantra',
+  'sonata',
+  'optima',
+  'k5',
+  'forte',
+  'rio',
+  'passat',
+  'jetta',
+  'golf',
+  'gli',
+  'gti',
+  'mazda3',
+  'mazda 3',
+  'mazda6',
+  'mazda 6',
+  'legacy',
+  'wrx',
+  'impreza',
+  'model 3',
+  'model s',
+  'a3',
+  'a4',
+  'a6',
+  '3 series',
+  '5 series',
+  'c-class',
+  'e-class',
+  'is ',
+  'es ',
+  'gs ',
+  'ls ',
+  'tlx',
+  'ilx',
+  'rlx',
+  'cts',
+  'ct5',
+  'ct6',
+  'giulia',
+  'giulietta',
+  '4c',
+] as const;
 
 /** Resolve coupon by promotion code or coupon ID; return discounted amount in cents. Throws if invalid. */
 async function applyCouponDiscount(
@@ -71,15 +256,15 @@ async function applyCouponDiscount(
 }
 
 function inferVehicleSize(make: string, model: string): VehicleSize {
-  const m = (make || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const mod = (model || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const m = normalizeVehicleText(make);
+  const mod = normalizeVehicleText(model);
   if (!m || !mod) return 'medium';
   const combined = `${m} ${mod}`;
-  const has = (arr: string[]) => arr.some((p) => combined.includes(p));
-  if (has(XL_PATTERNS)) return 'xl';
-  if (has(LARGE_PATTERNS)) return 'large';
-  if (has(MEDIUM_PATTERNS)) return 'medium';
-  if (has(SEDAN_PATTERNS)) return 'sedan';
+  const haystackForPatterns = m === 'other' ? mod : combined;
+  if (matchesAnyPattern(haystackForPatterns, XL_PATTERNS)) return 'xl';
+  if (matchesAnyPattern(haystackForPatterns, LARGE_PATTERNS)) return 'large';
+  if (matchesAnyPattern(haystackForPatterns, MEDIUM_PATTERNS)) return 'medium';
+  if (matchesAnyPattern(haystackForPatterns, SEDAN_PATTERNS)) return 'sedan';
   if (m === 'ram') return 'large';
   if (m === 'gmc' && (mod.includes('sierra') || mod.includes('yukon') || mod.includes('canyon') || mod.includes('denali'))) return 'large';
   if (m === 'ford' && (mod.includes('f-') || mod.includes('f150') || mod.includes('ranger') || mod.includes('expedition') || mod.includes('bronco'))) return 'large';

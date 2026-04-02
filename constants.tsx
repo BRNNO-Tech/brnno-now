@@ -3,9 +3,16 @@ import { Service, Detailer, type VehicleSize } from './types';
 
 const currentYear = new Date().getFullYear();
 export const VEHICLE_YEARS = Array.from({ length: 16 }, (_, i) => String(currentYear - i));
-export const VEHICLE_MAKES = [
+const VEHICLE_MAKES_LIST = [
   'Honda', 'Toyota', 'Ford', 'Chevrolet', 'Nissan', 'BMW', 'Mercedes-Benz', 'Hyundai', 'Kia', 'Jeep',
-  'Volkswagen', 'Subaru', 'Mazda', 'Ram', 'GMC', 'Dodge', 'Lexus', 'Audi', 'Tesla', 'Acura', 'Cadillac', 'Other'
+  'Volkswagen', 'Subaru', 'Mazda', 'Ram', 'GMC', 'Dodge', 'Lexus', 'Audi', 'Tesla', 'Acura', 'Cadillac', 'Other',
+] as const;
+const OTHER_MAKE = 'Other';
+export const VEHICLE_MAKES = [
+  ...VEHICLE_MAKES_LIST.filter((m) => m !== OTHER_MAKE).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' })
+  ),
+  OTHER_MAKE,
 ];
 export const VEHICLE_COLORS = ['Black', 'White', 'Gray', 'Silver', 'Red', 'Blue', 'Brown', 'Green', 'Other'];
 

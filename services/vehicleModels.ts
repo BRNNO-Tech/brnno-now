@@ -22,7 +22,9 @@ export async function fetchVehicleModels(make: string, year: string): Promise<st
     const names = results
       .map((r: { Model_Name?: string }) => r?.Model_Name)
       .filter((n): n is string => typeof n === 'string' && n.length > 0);
-    return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+    return [...new Set(names)].sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    );
   } catch {
     return [];
   }
