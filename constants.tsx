@@ -24,7 +24,7 @@ export const VEHICLE_SIZES: { id: VehicleSize; label: string; sublabel?: string 
   { id: 'xl', label: 'XL', sublabel: 'Van/Lifted/Dualy' },
 ];
 
-/** Services: Interior, Exterior, Full Detail. Price comes from PRICING_MATRIX by vehicle size. */
+/** Services: standard and express tiers. Price comes from PRICING_MATRIX by vehicle size (express tiers use flat pricing). */
 export const SERVICES: Service[] = [
   {
     id: 'interior-detail',
@@ -47,6 +47,27 @@ export const SERVICES: Service[] = [
     duration: '3–4 hrs',
     description: 'Interior + exterior full detail.',
   },
+  {
+    id: 'express-interior',
+    name: 'Express Interior',
+    price: 85,
+    duration: '1–1.5 hrs',
+    description: 'Quick interior refresh: vacuum, wipe-down, and light surface care.',
+  },
+  {
+    id: 'express-exterior',
+    name: 'Express Exterior',
+    price: 75,
+    duration: '45 min–1 hr',
+    description: 'Fast exterior: wash, dry, wheels, and basic shine.',
+  },
+  {
+    id: 'express-full-detail',
+    name: 'Express Full Detail',
+    price: 150,
+    duration: '1.5–2.5 hrs',
+    description: 'Streamlined interior and exterior package for a same-day refresh.',
+  },
 ];
 
 /** Pricing matrix: [serviceId][vehicleSize] = price (USD). */
@@ -54,6 +75,9 @@ export const PRICING_MATRIX: Record<string, Record<VehicleSize, number>> = {
   'interior-detail': { sedan: 175, medium: 215, large: 250, xl: 300 },
   'exterior-detail': { sedan: 125, medium: 150, large: 185, xl: 225 },
   'full-detail': { sedan: 250, medium: 285, large: 315, xl: 375 },
+  'express-interior': { sedan: 85, medium: 85, large: 85, xl: 85 },
+  'express-exterior': { sedan: 75, medium: 75, large: 75, xl: 75 },
+  'express-full-detail': { sedan: 150, medium: 150, large: 150, xl: 150 },
 };
 
 export function getServicePrice(serviceId: string, vehicleSize: VehicleSize): number {
@@ -67,6 +91,9 @@ export const SERVICE_DURATION_MINUTES: Record<string, number> = {
   'interior-detail': 150,
   'exterior-detail': 75,
   'full-detail': 210,
+  'express-interior': 75,
+  'express-exterior': 52,
+  'express-full-detail': 120,
 };
 
 export function getServiceDurationMinutes(serviceId: string): number {

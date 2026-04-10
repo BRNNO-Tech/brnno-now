@@ -11,6 +11,9 @@ const PRICING_MATRIX: Record<string, Record<VehicleSize, number>> = {
   'interior-detail': { sedan: 175, medium: 215, large: 250, xl: 300 },
   'exterior-detail': { sedan: 125, medium: 150, large: 185, xl: 225 },
   'full-detail': { sedan: 250, medium: 285, large: 315, xl: 375 },
+  'express-interior': { sedan: 85, medium: 85, large: 85, xl: 85 },
+  'express-exterior': { sedan: 75, medium: 75, large: 75, xl: 75 },
+  'express-full-detail': { sedan: 150, medium: 150, large: 150, xl: 150 },
 };
 
 function normalizeVehicleText(s: string): string {
